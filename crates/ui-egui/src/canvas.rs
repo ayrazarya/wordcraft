@@ -88,6 +88,9 @@ pub struct CanvasState {
     pub context_menu_at: Option<Pos2>,
     /// Screen rect of the selection's first line, for the floating mini toolbar.
     pub mini_anchor: Option<Rect>,
+    /// Paste Options badge (Ctrl) state after a paste.
+    pub paste_rev: u64,
+    pub paste_menu_open: bool,
     /// A picture, shape or text box being dragged by its frame.
     pub(crate) obj_drag: Option<crate::objects::ObjectDrag>,
     /// An ink stroke being drawn with a pen (Draw tab).
@@ -191,6 +194,8 @@ impl Default for CanvasState {
             context_menu_from_keys: false,
             context_menu_at: None,
             mini_anchor: None,
+            paste_rev: 0,
+            paste_menu_open: false,
             pasted: false,
             swallow_text: false,
             wheel: Default::default(),
@@ -1324,6 +1329,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     app.canvas.context_menu_open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     if let Some(c) = crate::ink::cursor(app).filter(|_| resp.hovered() || app.canvas.ink.is_some()) {
         ui.ctx().set_cursor_icon(c);
+    } else if app.session.painter.is_some() && resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     } else if resp.hovered() || app.canvas.obj_drag.is_some() {
         let latest = ui.input(|i| i.pointer.latest_pos());
         let over_object = latest.and_then(|p| crate::objects::cursor(app, &layout, &rects, geo.scale, p));
@@ -1350,6 +1357,9 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
         && app.ui.mini_toolbar
     {
         crate::mini_toolbar::show(app, ui.ctx(), sel, area);
+    }
+    if app.canvas.paste_rev == app.session.rev() && !app.session.view.read_mode && !app.session.view.focus_mode {
+        show_paste_badge(app, ui, area);
     }
     if app.session.view.read_mode {
         // Fixed navigation chrome, independent of the horizontally moving columns.
@@ -2001,7 +2011,7 @@ fn mouse(app: &mut WordApp, ui: &Ui, resp: &egui::Response, rects: &[Rect], layo
         app.canvas.dragging = false;
         app.canvas.column_drag = None;
         app.canvas.unit_drag = None;
-        if app.session.painter.is_some() && !app.session.sel.is_collapsed() {
+        if app.session.painter.is_some() {
             let _ = app.run("edit.pasteFormat", json!({}));
         }
     }
@@ -2491,6 +2501,12 @@ fn context_menu(app: &mut WordApp, ui: &mut Ui) {
         ui.close();
     }
     item(ui, app, "Paste", "edit.paste", json!({}));
+    if !app.session.sel.is_collapsed() && ui.button(tl!("Copy as Markdown")).clicked() {
+        let md = app.session.selected_markdown();
+        ui.ctx().copy_text(md);
+        app.status(tl!("Copied as Markdown to clipboard"));
+        ui.close();
+    }
     ui.separator();
     if let Some(syn) = app.canvas.context_synonyms.clone().and_then(|v| v.as_array().cloned()).filter(|a| !a.is_empty()) {
         ui.menu_button(tl!("Synonyms"), |ui| {
@@ -2511,6 +2527,31 @@ fn context_menu(app: &mut WordApp, ui: &mut Ui) {
     item(ui, app, "Paragraph…", "ui.dialog", json!({"name": "paragraph"}));
     item(ui, app, "Link…", "ui.dialog", json!({"name": "link"}));
     item(ui, app, "New Comment", "review.newComment", json!({}));
+    if !app.session.sel.is_collapsed() {
+        ui.separator();
+        ui.menu_button(tl!("AI Assistant"), |ui| {
+            if ui.button(tl!("Rephrase (Formal)")).clicked() {
+                let _ = app.run("ai.rewrite", json!({"tone": "formal"}));
+                ui.close();
+            }
+            if ui.button(tl!("Rephrase (Academic)")).clicked() {
+                let _ = app.run("ai.rewrite", json!({"tone": "academic"}));
+                ui.close();
+            }
+            if ui.button(tl!("Make Concise")).clicked() {
+                let _ = app.run("ai.rewrite", json!({"tone": "concise"}));
+                ui.close();
+            }
+            if ui.button(tl!("Fix Grammar & Spelling")).clicked() {
+                let _ = app.run("ai.fixGrammar", json!({}));
+                ui.close();
+            }
+            if ui.button(tl!("Summarize")).clicked() {
+                let _ = app.run("ai.summarize", json!({"insert": true}));
+                ui.close();
+            }
+        });
+    }
     if !wordcraft_engine::cmd::fields::selected(&app.session).is_empty() {
         ui.separator();
         item(ui, app, tl!("Update Field"), "references.updateFields", json!({}));
@@ -2647,6 +2688,54 @@ fn link_under(app: &WordApp, layout: &DocLayout, page: usize, x: f32, y: f32, po
 /// so a document can't launch `file:` paths, programs or custom-scheme handlers.
 fn is_followable_link(url: &str) -> bool {
     wordcraft_doc::link::is_web_or_mail_link(url)
+}
+
+fn show_paste_badge(app: &mut WordApp, ui: &mut Ui, viewport: Rect) {
+    if app.canvas.paste_rev != app.session.rev() {
+        return;
+    }
+    let Some((p, h)) = caret_screen(app) else { return };
+    let t = Tokens::get(ui.ctx());
+    let badge_size = vec2(60.0, 20.0);
+    let min_x = (p.x + 6.0).clamp(viewport.min.x + 2.0, (viewport.max.x - badge_size.x - 2.0).max(viewport.min.x));
+    let min_y = (p.y + (h - 18.0).max(0.0)).clamp(viewport.min.y + 2.0, (viewport.max.y - badge_size.y - 2.0).max(viewport.min.y));
+    let badge_rect = Rect::from_min_size(pos2(min_x, min_y), badge_size);
+    let id = egui::Id::new("paste_options_badge");
+    let resp = ui.interact(badge_rect, id, Sense::click());
+    let hovered = resp.hovered();
+    ui.painter().rect_filled(badge_rect, 3.0, if hovered { t.hover } else { t.menu });
+    ui.painter().rect_stroke(badge_rect, 3.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    crate::icons::paint(ui.painter(), Rect::from_min_size(badge_rect.min + vec2(3.0, 2.0), vec2(15.0, 15.0)), "paste", t.icon, t.accent);
+    ui.painter().text(badge_rect.min + vec2(20.0, 10.0), egui::Align2::LEFT_CENTER, "(Ctrl) ▾", regular(10.5), t.text);
+
+    let ctrl_hit = ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V));
+    if resp.clicked() || ctrl_hit {
+        app.canvas.paste_menu_open = !app.canvas.paste_menu_open;
+    }
+
+    if app.canvas.paste_menu_open {
+        let menu_pos = pos2(badge_rect.min.x, (badge_rect.max.y + 2.0).min(viewport.max.y - 80.0));
+        egui::Area::new(egui::Id::new("paste_options_popup")).order(egui::Order::Tooltip).fixed_pos(menu_pos).show(ui.ctx(), |ui| {
+            egui::Frame::menu(ui.style()).show(ui, |ui| {
+                ui.set_min_width(170.0);
+                if ui.button(tl!("Keep Source Formatting")).clicked() {
+                    let _ = app.run("edit.paste", json!({}));
+                    app.canvas.paste_rev = app.session.rev();
+                    app.canvas.paste_menu_open = false;
+                }
+                if ui.button(tl!("Merge Formatting")).clicked() {
+                    let _ = app.run("edit.pasteMerge", json!({}));
+                    app.canvas.paste_rev = app.session.rev();
+                    app.canvas.paste_menu_open = false;
+                }
+                if ui.button(tl!("Keep Text Only")).clicked() {
+                    let _ = app.run("edit.pasteText", json!({}));
+                    app.canvas.paste_rev = app.session.rev();
+                    app.canvas.paste_menu_open = false;
+                }
+            });
+        });
+    }
 }
 
 #[cfg(test)]

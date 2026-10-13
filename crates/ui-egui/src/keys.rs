@@ -323,6 +323,14 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
                 }
             }
             egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                if (key == Key::F11 || (key == Key::F && modifiers.alt && modifiers.shift)) && !modifiers.command {
+                    let _ = app.run("view.focus", json!({}));
+                    continue;
+                }
+                if key == Key::Escape && app.session.view.focus_mode {
+                    let _ = app.run("view.focus", json!({}));
+                    continue;
+                }
                 if key == Key::Escape && app.session.painter.is_some() {
                     app.session.painter = None;
                     continue;

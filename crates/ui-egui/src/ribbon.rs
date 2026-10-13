@@ -514,7 +514,10 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
                 ui.ctx().copy_text(app.session.clipboard_text.clone());
             }
             let active = app.session.painter.is_some();
-            small(ui, app, "painter", Some("Format"), "Format Painter", "edit.formatPainter", json!({}), active);
+            let resp = small(ui, app, "painter", Some("Format"), "Format Painter", "edit.formatPainter", json!({}), active);
+            if resp.double_clicked() {
+                let _ = app.run("edit.formatPainter", json!({"sticky": true}));
+            }
         });
     });
     group(ui, "Font", Some("format.fontDialog"), app, |ui, app| {

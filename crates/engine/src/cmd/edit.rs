@@ -696,15 +696,27 @@ fn painter_pick(s: &mut Session) {
 }
 
 fn painter(s: &mut Session, v: &Value) -> CmdResult {
+    let sticky_req = p::bool(v, "sticky");
+    if let Some(true) = sticky_req {
+        if let Some((_, _, sticky)) = s.painter.as_mut() {
+            *sticky = true;
+            return Ok(json!({"active": true, "sticky": true}));
+        }
+        painter_pick(s);
+        if let Some((_, _, sticky)) = s.painter.as_mut() {
+            *sticky = true;
+        }
+        return Ok(json!({"active": true, "sticky": true}));
+    }
     if s.painter.is_some() {
         s.painter = None;
         return Ok(json!({"active": false}));
     }
     painter_pick(s);
     if let Some((_, _, sticky)) = s.painter.as_mut() {
-        *sticky = p::bool(v, "sticky").unwrap_or(false);
+        *sticky = sticky_req.unwrap_or(false);
     }
-    Ok(json!({"active": true}))
+    Ok(json!({"active": true, "sticky": s.painter.as_ref().map(|p| p.2).unwrap_or(false)}))
 }
 
 /// Apply the format painter's formatting to the selection.

@@ -646,6 +646,10 @@ impl WordApp {
         }
         let r = self.execute_user(id, params);
         let r = system_clipboard::explain(self, id, r);
+        if r.is_ok() && matches!(id, "edit.paste" | "edit.pasteMerge" | "edit.pasteText") {
+            self.canvas.paste_rev = self.session.rev();
+            self.canvas.paste_menu_open = false;
+        }
         // Check Accessibility shows its findings in the Accessibility pane, kept up to date there.
         if id == "file.accessibility" && r.is_ok() {
             self.session.view.accessibility_pane = true;
@@ -1600,6 +1604,22 @@ impl WordApp {
         crate::keytips::logic(self, &ctx);
         if self.ui.backstage {
             backstage::show(self, ui);
+        } else if self.session.view.focus_mode {
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+                canvas::show(self, ui);
+            });
+            let exit_w = 90.0;
+            let exit_rect =
+                egui::Rect::from_min_size(egui::pos2(ui.available_rect_before_wrap().max.x - exit_w - 12.0, 8.0), egui::vec2(exit_w, 24.0));
+            let resp = ui.allocate_rect(exit_rect, egui::Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(exit_rect, 4.0, t.menu);
+                ui.painter().rect_stroke(exit_rect, 4.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+                ui.painter().text(exit_rect.center(), egui::Align2::CENTER_CENTER, tl!("Exit Focus"), theme::regular(11.5), t.text);
+            }
+            if resp.clicked() || ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::F11)) {
+                let _ = self.run("view.focus", serde_json::json!({}));
+            }
         } else {
             chrome::title_bar(self, ui);
             ribbon::show(self, ui);

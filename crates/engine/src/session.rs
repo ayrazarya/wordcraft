@@ -1327,6 +1327,19 @@ impl Session {
         let (a, b) = self.sel.ordered();
         self.doc.copy_range(&a, &b).plain_text()
     }
+
+    /// Selected content formatted as Markdown.
+    pub fn selected_markdown(&self) -> String {
+        let (a, b) = self.sel.ordered();
+        if a == b {
+            return String::new();
+        }
+        let f = self.doc.copy_range(&a, &b);
+        let mut subdoc = wordcraft_doc::Document::new();
+        subdoc.styles = self.doc.styles.clone();
+        subdoc.body = f.blocks.into_iter().map(std::sync::Arc::new).collect();
+        wordcraft_formats::markdown::export(&subdoc)
+    }
 }
 
 /// A new blank document on `region`'s paper (see [`Session::blank_document`]).

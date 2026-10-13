@@ -2013,7 +2013,18 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     ("Lines", "lines"),
                 ] {
                     ui.label(tl!(l));
-                    ui.label(stats.get(k).map(|v| v.to_string()).unwrap_or_default());
+                    let val_str = match stats.get(k) {
+                        Some(serde_json::Value::Number(n)) => {
+                            if let Some(u) = n.as_u64() {
+                                format_thousands(u)
+                            } else {
+                                n.to_string()
+                            }
+                        }
+                        Some(v) => v.to_string(),
+                        None => String::new(),
+                    };
+                    ui.label(val_str);
                     ui.end_row();
                 }
             });
@@ -3321,6 +3332,18 @@ fn enclose_preview(ui: &mut Ui, style: &str, text: &str, shape: &str) {
     };
     let dy = if shape == "triangle" && box_h > 0.0 { h * 0.3 } else { 0.0 };
     p.text(c + vec2(0.0, dy), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(px), ink);
+}
+
+fn format_thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out.chars().rev().collect()
 }
 
 #[cfg(test)]

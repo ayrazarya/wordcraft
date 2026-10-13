@@ -5006,3 +5006,41 @@ fn insert_picture_takes_a_windows_metafile() {
     assert!(err.to_string().contains("WMF, EMF"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn format_painter_sticky_stays_active_across_multiple_applications() {
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "First Second Third"}));
+    run(&mut s, "select.text", json!({"text": "First"}));
+    run(&mut s, "format.bold", json!({}));
+    // Double-click sets sticky: true
+    let r = run(&mut s, "edit.formatPainter", json!({"sticky": true}));
+    assert_eq!(r["sticky"], true);
+    assert!(s.painter.is_some());
+
+    // Apply to "Second"
+    run(&mut s, "select.text", json!({"text": "Second"}));
+    run(&mut s, "edit.pasteFormat", json!({}));
+    assert!(s.painter.is_some(), "sticky painter stays active after first apply");
+
+    // Apply to "Third"
+    run(&mut s, "select.text", json!({"text": "Third"}));
+    run(&mut s, "edit.pasteFormat", json!({}));
+    assert!(s.painter.is_some(), "sticky painter stays active after second apply");
+
+    // Click again to turn off
+    let off = run(&mut s, "edit.formatPainter", json!({}));
+    assert_eq!(off["active"], false);
+    assert!(s.painter.is_none());
+}
+
+#[test]
+fn selected_markdown_exports_formatted_text() {
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "Hello world"}));
+    run(&mut s, "select.text", json!({"text": "world"}));
+    run(&mut s, "format.bold", json!({}));
+    run(&mut s, "select.all", json!({}));
+    let md = s.selected_markdown();
+    assert!(md.contains("Hello") && md.contains("**world**"), "markdown contains bold: {md}");
+}
