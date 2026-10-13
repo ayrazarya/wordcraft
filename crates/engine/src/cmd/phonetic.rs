@@ -168,7 +168,7 @@ mod tests {
         let p = para(&s);
         assert_eq!(p.plain_text(), "I read 漢字 daily.");
         let Some(InlineObject::Ruby { ruby, size, align, .. }) = p.objects.first() else { panic!("{:?}", p.objects) };
-        assert_eq!((ruby.as_str(), *size, align.ooxml()), ("かんじ", 6.0, "distributeSpace"));
+        assert_eq!((ruby.as_str(), *size, align.ooxml()), ("かんじ", 5.5, "distributeSpace"));
         // The selection is the ruby: editing it keeps the base, changes the reading and offset.
         let r = s.run("format.phonetic", &json!({"ruby": "カンジ", "offset": 2})).unwrap();
         assert_eq!((r["ruby"].as_str(), r["offset"].as_f64()), (Some("カンジ"), Some(2.0)));

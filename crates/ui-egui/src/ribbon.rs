@@ -771,6 +771,9 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
     group(ui, "AI", None, app, |ui, app| {
         let active = app.session.view.ai_pane;
         big(ui, app, "sparkle", "AI Assistant", "view.aiPane", json!({}), active);
+        stack(ui, |ui| {
+            small(ui, app, "sparkle", Some("Draft"), "Tulis dengan AI…", "ui.dialog", json!({"name": "aiPrompt"}), false);
+        });
     });
 }
 

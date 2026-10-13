@@ -174,7 +174,7 @@ impl StyleSheet {
     /// The built-in style set used for new documents.
     pub fn builtin() -> Self {
         let mut s = StyleSheet {
-            default_chr: CharProps { font: Some(BODY_FONT.into()), size: Some(12.0), kern: Some(1.0), lang: Some("en-US".into()), ..chr() },
+            default_chr: CharProps { font: Some(BODY_FONT.into()), size: Some(11.0), kern: Some(1.0), lang: Some("en-US".into()), ..chr() },
             default_para: ParaProps {
                 space_after: Some(8.0),
                 space_before: Some(0.0),
@@ -218,6 +218,12 @@ impl StyleSheet {
         ];
         for (i, (size, before, after, italic, c, font)) in heads.into_iter().enumerate() {
             let n = i + 1;
+            let prio = match n {
+                1 => 2,
+                2 => 3,
+                3 => 6,
+                _ => 10 + n as u32,
+            };
             add(Style {
                 id: format!("Heading{n}"),
                 name: format!("Heading {n}"),
@@ -233,7 +239,7 @@ impl StyleSheet {
                     ..para()
                 },
                 chr: CharProps { font: Some(font.into()), size: Some(size), italic, color: color(c), ..chr() },
-                priority: Some(9 + n as u32),
+                priority: Some(prio),
                 quick: n <= 3,
                 ..p_style()
             });
@@ -245,7 +251,7 @@ impl StyleSheet {
             next: Some("Normal".into()),
             para: ParaProps { space_after: Some(4.0), contextual_spacing: Some(true), line_spacing: Some(LineSpacing::Multiple(1.0)), ..para() },
             chr: CharProps { font: Some(HEADING_FONT.into()), size: Some(28.0), spacing: Some(-0.5), kern: Some(14.0), ..chr() },
-            priority: Some(10),
+            priority: Some(4),
             quick: true,
             ..p_style()
         });
@@ -255,7 +261,7 @@ impl StyleSheet {
             based_on: Some("Normal".into()),
             next: Some("Normal".into()),
             chr: CharProps { size: Some(14.0), spacing: Some(0.75), color: color(Rgb(0x59, 0x59, 0x59)), ..chr() },
-            priority: Some(11),
+            priority: Some(5),
             quick: true,
             ..p_style()
         });

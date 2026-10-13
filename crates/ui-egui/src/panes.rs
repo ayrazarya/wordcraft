@@ -143,6 +143,7 @@ fn nav(app: &mut WordApp, ui: &mut Ui) {
         ui.data_mut(|d| d.insert_temp(qid, q.clone()));
         if !q.is_empty() {
             let _ = app.session.run("edit.find", &json!({"text": q}));
+            app.ui.nav_tab = "results".into();
         } else {
             app.session.find.results.clear();
         }
@@ -168,7 +169,12 @@ fn nav(app: &mut WordApp, ui: &mut Ui) {
         }
         "results" => {
             let results = app.session.find.results.clone();
-            ui.label(egui::RichText::new(format!("{} results", results.len())).small().weak());
+            let count_text = if results.len() == 1 {
+                "1 result found".to_string()
+            } else {
+                format!("{} results found", results.len())
+            };
+            ui.label(egui::RichText::new(count_text).small().weak());
             for (a, b) in results.iter().take(500) {
                 let Some(p) = app.session.doc.para_at(a) else { continue };
                 let from = p.clamp(a.off.saturating_sub(30));

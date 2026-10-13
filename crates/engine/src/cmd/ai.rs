@@ -158,7 +158,8 @@ fn fix_grammar(s: &mut Session, v: &Value) -> CmdResult {
         }
     }
 
-    if p::bool(v, "replace").unwrap_or(false) && !s.sel.is_collapsed() {
+    let should_replace = p::bool(v, "replace").unwrap_or(!s.sel.is_collapsed());
+    if should_replace && !s.sel.is_collapsed() {
         let _ = type_text(s, &fixed);
     }
 
@@ -166,6 +167,7 @@ fn fix_grammar(s: &mut Session, v: &Value) -> CmdResult {
         "original": text,
         "fixed": fixed,
         "changed": changed,
+        "replaced": should_replace && !s.sel.is_collapsed(),
     }))
 }
 

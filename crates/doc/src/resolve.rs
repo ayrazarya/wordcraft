@@ -379,9 +379,9 @@ mod tests {
         let s = StyleSheet::builtin();
         let c = s.resolve_char(None, &CharProps { style: Some("Strong".into()), italic: Some(true), ..Default::default() });
         assert!(c.bold && c.italic);
-        assert_eq!(c.size, 12.0);
+        assert_eq!(c.size, 11.0);
         let unknown = s.resolve_char(Some("NoSuchStyle"), &CharProps::default());
-        assert_eq!(unknown.size, 12.0);
+        assert_eq!(unknown.size, 11.0);
     }
 
     #[test]

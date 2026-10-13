@@ -489,6 +489,11 @@ pub enum Dialog {
     },
     /// Line Numbers, Hyphenation, Language, Envelopes and Labels (#407).
     Layout(Box<crate::dialogs_layout::LayoutDialog>),
+    /// AI Writing Assistant prompt dialog (quick draft directly to document).
+    AiPrompt {
+        prompt: String,
+        kind: String,
+    },
 }
 
 /// The Table Properties dialog's fields. Lengths are in the interface unit
@@ -881,6 +886,7 @@ impl Dialog {
             Dialog::Link { .. } => "link",
             Dialog::Bookmark { .. } => "bookmark",
             Dialog::WordCount { .. } => "wordCount",
+            Dialog::AiPrompt { .. } => "aiPrompt",
             Dialog::Zoom { .. } => "zoom",
             Dialog::Watermark { .. } => "watermark",
             Dialog::Phonetic { .. } => "phonetic",
@@ -1086,6 +1092,7 @@ impl Dialog {
             "link" => Dialog::Link { url: "https://".into(), text: app.session.selected_text() },
             "bookmark" => Dialog::Bookmark { name: String::new() },
             "wordCount" => Dialog::WordCount { stats: app.session.run("review.wordCount", &json!({})).unwrap_or_default() },
+            "aiPrompt" => Dialog::AiPrompt { prompt: app.session.selected_text(), kind: "general".into() },
             "zoom" => Dialog::Zoom { percent: (app.session.view.zoom * 100.0).round() },
             "watermark" => Dialog::Watermark { text: "CONFIDENTIAL".into(), diagonal: true },
             "phonetic" => {
@@ -1330,6 +1337,7 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context) {
         Dialog::Link { .. } => "Insert Hyperlink",
         Dialog::Bookmark { .. } => "Bookmark",
         Dialog::WordCount { .. } => "Word Count",
+        Dialog::AiPrompt { .. } => "Write with AI",
         Dialog::Zoom { .. } => "Zoom",
         Dialog::Watermark { .. } => "Custom Watermark",
         Dialog::Phonetic { .. } => "Phonetic Guide",
@@ -2035,6 +2043,30 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 *stats = v;
             }
             let (ok, cancel) = buttons(ui, tl!("Close"));
+            ok || cancel
+        }
+        Dialog::AiPrompt { prompt, kind } => {
+            ui.label(tl!("Apa yang ingin Anda buat atau tuliskan?"));
+            ui.add(
+                egui::TextEdit::multiline(prompt)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(tl!("Contoh: Draf surat permohonan izin koordinasi...")),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(tl!("Jenis Tulisan:"));
+                ui.radio_value(kind, "general".to_string(), tl!("Umum"));
+                ui.radio_value(kind, "letter".to_string(), tl!("Surat Resmi"));
+                ui.radio_value(kind, "meeting_notes".to_string(), tl!("Notula Rapat"));
+            });
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(tl!("Teks akan langsung ditulis otomatis ke posisi kursor dengan format aktif dokumen.")).small().weak());
+            let (ok, cancel) = buttons(ui, tl!("Tulis ke Dokumen"));
+            if ok && !prompt.trim().is_empty() {
+                let _ = app.run("ai.generateDraft", json!({"prompt": prompt, "kind": kind, "insert": true}));
+                app.status(tl!("AI: Teks draf berhasil ditulis langsung ke dokumen"));
+            }
             ok || cancel
         }
         Dialog::Zoom { percent } => {

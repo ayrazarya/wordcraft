@@ -81,6 +81,8 @@ pub struct AiChatState {
     pub suggestions: Vec<String>,
     pub suggestion_prefix: String,
     pub suggestion_busy: bool,
+    pub auto_write: bool,
+    pub pending_auto_write: Option<String>,
     next_msg_id: u64,
     tx_req: Option<Sender<AiTask>>,
     rx_res: Option<Receiver<AiResult>>,
@@ -149,6 +151,8 @@ impl Default for AiChatState {
             suggestions: Vec::new(),
             suggestion_prefix: String::new(),
             suggestion_busy: false,
+            auto_write: true,
+            pending_auto_write: None,
             next_msg_id: 2,
             tx_req: Some(tx_worker),
             rx_res: Some(rx),
@@ -172,11 +176,14 @@ impl AiChatState {
                     self.messages.push(AiMessage {
                         id,
                         role: MessageRole::Assistant,
-                        content,
+                        content: content.clone(),
                         timestamp: "Baru saja".into(),
                         context_badge: None,
                         font_info,
                     });
+                    if self.auto_write {
+                        self.pending_auto_write = Some(content);
+                    }
                 }
                 AiResult::ChatError(err) => {
                     self.is_busy = false;
@@ -313,10 +320,14 @@ fn render_chat_tab(app: &mut WordApp, ui: &mut Ui, doc_format: &DocFormatInfo) {
 
     ui.separator();
 
-    // Context Toggles
+    // Context & Auto-Write Toggles
     ui.horizontal(|ui| {
-        ui.checkbox(&mut app.ai_chat.include_selection, "Sertakan Teks Terpilih");
-        ui.checkbox(&mut app.ai_chat.include_full_doc, "Seluruh Dokumen");
+        ui.checkbox(&mut app.ai_chat.include_selection, tl!("Sertakan Teks Terpilih"));
+        ui.checkbox(&mut app.ai_chat.include_full_doc, tl!("Seluruh Dokumen"));
+    });
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut app.ai_chat.auto_write, tl!("Tulis Langsung ke Dokumen Otomatis"))
+            .on_hover_text(tl!("Teks hasil AI otomatis ditulis langsung ke dokumen pada kursor mengikuti font dan format dokumen aktif"));
     });
 
     // Input Area
@@ -417,9 +428,13 @@ fn send_user_message(app: &mut WordApp, doc_format: &DocFormatInfo) {
     let sys_prompt = app.ui.ai_config.system_prompt.clone();
     let font_summary = format!("Font dokumen aktif: {}, ukuran: {}pt, gaya: {}", doc_format.font, doc_format.size, doc_format.style);
 
-    let mut full_system = format!(
-        "{sys_prompt}\n[INFORMASI FORMAT DOKUMEN: {font_summary}]\nSaat memberikan saran penulisan atau kalimat, hasilkan teks yang langsung siap disisipkan ke dalam dokumen."
-    );
+    let auto_prompt = if app.ai_chat.auto_write {
+        "\n[PENTING: Teks yang Anda hasilkan akan langsung otomatis ditulis ke dalam dokumen Word pada posisi kursor pengguna, mengikuti font & format aktif dokumen. Berikan HANYA teks isi yang diinginkan tanpa kalimat pembuka, basa-basi, atau tanda kutip pembungkus.]"
+    } else {
+        "\nSaat memberikan saran penulisan atau kalimat, hasilkan teks yang langsung siap disisipkan ke dalam dokumen."
+    };
+
+    let mut full_system = format!("{sys_prompt}\n[INFORMASI FORMAT DOKUMEN: {font_summary}]{auto_prompt}");
 
     if app.ai_chat.include_selection {
         let sel = app.session.selected_text();

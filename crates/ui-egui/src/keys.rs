@@ -323,6 +323,10 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
                 }
             }
             egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                if key == Key::A && modifiers.command && modifiers.alt {
+                    let _ = app.run("ui.dialog", json!({"name": "aiPrompt"}));
+                    continue;
+                }
                 if (key == Key::F11 || (key == Key::F && modifiers.alt && modifiers.shift)) && !modifiers.command {
                     let _ = app.run("view.focus", json!({}));
                     continue;

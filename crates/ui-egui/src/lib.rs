@@ -1410,6 +1410,17 @@ impl WordApp {
         zotero::poll(self, ctx);
         read_aloud::poll(self, ctx);
         self.ai_chat.poll(ctx);
+        if let Some(text) = self.ai_chat.pending_auto_write.take() {
+            let replace = !self.session.sel.is_collapsed();
+            let _ = self.session.run(
+                "ai.insertWithFormat",
+                &serde_json::json!({
+                    "text": text,
+                    "replace": replace,
+                }),
+            );
+            self.status(tl!("AI: Teks berhasil ditulis otomatis ke dokumen"));
+        }
         self.clear_stale_change_picture();
         let _ = self.poll_file_dialog();
         self.drain_inbox();

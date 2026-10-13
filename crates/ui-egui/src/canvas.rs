@@ -2530,20 +2530,24 @@ fn context_menu(app: &mut WordApp, ui: &mut Ui) {
     if !app.session.sel.is_collapsed() {
         ui.separator();
         ui.menu_button(tl!("AI Assistant"), |ui| {
+            if ui.button(tl!("Tulis Draf AI…")).clicked() {
+                let _ = app.run("ui.dialog", json!({"name": "aiPrompt"}));
+                ui.close();
+            }
             if ui.button(tl!("Rephrase (Formal)")).clicked() {
-                let _ = app.run("ai.rewrite", json!({"tone": "formal"}));
+                let _ = app.run("ai.rewrite", json!({"tone": "formal", "replace": true}));
                 ui.close();
             }
             if ui.button(tl!("Rephrase (Academic)")).clicked() {
-                let _ = app.run("ai.rewrite", json!({"tone": "academic"}));
+                let _ = app.run("ai.rewrite", json!({"tone": "academic", "replace": true}));
                 ui.close();
             }
             if ui.button(tl!("Make Concise")).clicked() {
-                let _ = app.run("ai.rewrite", json!({"tone": "concise"}));
+                let _ = app.run("ai.rewrite", json!({"tone": "concise", "replace": true}));
                 ui.close();
             }
             if ui.button(tl!("Fix Grammar & Spelling")).clicked() {
-                let _ = app.run("ai.fixGrammar", json!({}));
+                let _ = app.run("ai.fixGrammar", json!({"replace": true}));
                 ui.close();
             }
             if ui.button(tl!("Summarize")).clicked() {
@@ -2551,6 +2555,8 @@ fn context_menu(app: &mut WordApp, ui: &mut Ui) {
                 ui.close();
             }
         });
+    } else {
+        item(ui, app, "Tulis dengan AI…", "ui.dialog", json!({"name": "aiPrompt"}));
     }
     if !wordcraft_engine::cmd::fields::selected(&app.session).is_empty() {
         ui.separator();
