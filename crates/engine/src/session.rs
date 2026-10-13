@@ -1274,6 +1274,26 @@ impl Session {
     pub fn caret_path(&self) -> &Path {
         &self.sel.focus.path
     }
+
+    /// The active paragraph position representing the current selection or caret.
+    /// When text is selected, returns the first selected paragraph in `para_paths_in`,
+    /// avoiding the trailing boundary when a selection ends at `off == 0` of a following
+    /// unselected paragraph (#418).
+    pub fn active_para_pos(&self) -> Pos {
+        if self.sel.is_collapsed() {
+            return self.sel.focus.clone();
+        }
+        let (a, b) = self.sel.ordered();
+        if let Some(first) = self.doc.para_paths_in(&a, &b).first() { Pos { story: a.story, path: first.clone(), off: 0 } } else { a }
+    }
+
+    /// Resolved paragraph formatting representing the current selection or caret.
+    pub fn resolved_para(&self) -> wordcraft_doc::ResolvedPara {
+        let pos = self.active_para_pos();
+        let props = self.doc.para_at(&pos).map(|p| p.props.clone()).unwrap_or_default();
+        self.doc.styles.resolve_para(&props)
+    }
+
     pub fn story(&self) -> StoryRef {
         self.sel.focus.story
     }

@@ -108,6 +108,16 @@ pub struct ListForm {
     /// Paragraph styles a level can link to: (id, name).
     #[serde(skip)]
     pub styles: Vec<(String, String)>,
+    #[serde(skip)]
+    pub more: bool,
+    #[serde(skip)]
+    pub set_all_open: bool,
+    #[serde(skip)]
+    pub set_all_bullet: f32,
+    #[serde(skip)]
+    pub set_all_text: f32,
+    #[serde(skip)]
+    pub set_all_step: f32,
 }
 
 impl ListForm {
@@ -126,7 +136,18 @@ impl ListForm {
             .map(|st| (st.id.clone(), st.name.clone()))
             .collect();
         styles.sort_by(|a, b| a.1.cmp(&b.1));
-        ListForm { levels, level: 0, styles }
+        let k = crate::options::unit().pt_per_unit();
+        let default_step = 18.0 / k;
+        ListForm {
+            levels,
+            level: 0,
+            styles,
+            more: true,
+            set_all_open: false,
+            set_all_bullet: 0.0,
+            set_all_text: default_step,
+            set_all_step: default_step,
+        }
     }
 
     /// `list.define` parameters for the whole list.
@@ -165,7 +186,8 @@ impl ListForm {
 pub fn define_list(app: &mut WordApp, ui: &mut Ui, f: &mut ListForm) -> bool {
     let unit = crate::options::unit();
     fn len(v: &mut f32, unit: wordcraft_geom::Unit) -> egui::DragValue<'_> {
-        egui::DragValue::new(v).speed(0.01).range(-10.0..=22.0).measure(unit).max_decimals(2)
+        let k = unit.pt_per_unit();
+        egui::DragValue::new(v).speed(3.6 / k).range(-10.0 * 72.0 / k..=22.0 * 72.0 / k).measure(unit).max_decimals(2)
     }
     let heading = |ui: &mut Ui, s: &str| {
         ui.add_space(4.0);
@@ -187,106 +209,167 @@ pub fn define_list(app: &mut WordApp, ui: &mut Ui, f: &mut ListForm) -> bool {
     });
     let i = f.level.min(LEVELS - 1);
     let styles = f.styles.clone();
-    let Some(l) = f.levels.get_mut(i) else { return true };
     heading(ui, "Number format");
-    egui::Grid::new("mll_number").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-        ui.label(tl!("Enter formatting for number:"));
-        ui.text_edit_singleline(&mut l.text);
-        ui.end_row();
-        ui.label(tl!("Number style for this level:"));
-        let current = STYLES.iter().find(|(k, _)| *k == l.format).map(|(_, s)| *s).unwrap_or("");
-        egui::ComboBox::from_id_salt("mll_style").selected_text(style_label(current)).show_ui(ui, |ui| {
-            for (k, s) in STYLES {
-                if ui.selectable_label(l.format == k, style_label(s)).clicked() {
-                    // A new style puts this level's number in the text if it had none (a bullet
-                    // its character).
-                    if k == "bullet" {
-                        l.text = "•".into();
-                    } else if l.format == "bullet" || !l.text.contains('%') {
-                        l.text = format!("%{}.", i + 1);
-                    }
-                    l.format = k.to_string();
-                }
-            }
-        });
-        ui.end_row();
-        if i > 0 {
-            ui.label(tl!("Include level number from:"));
-            egui::ComboBox::from_id_salt("mll_include").selected_text("").show_ui(ui, |ui| {
-                for k in 0..i {
-                    if ui.selectable_label(false, crate::i18n::fmt(tl!("Level {n}"), &[("n", &(k + 1).to_string())])).clicked() {
-                        l.text.push_str(&format!("%{}", k + 1));
+    {
+        let Some(l) = f.levels.get_mut(i) else { return true };
+        egui::Grid::new("mll_number").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+            ui.label(tl!("Enter formatting for number:"));
+            ui.text_edit_singleline(&mut l.text);
+            ui.end_row();
+            ui.label(tl!("Number style for this level:"));
+            let current = STYLES.iter().find(|(k, _)| *k == l.format).map(|(_, s)| *s).unwrap_or("");
+            egui::ComboBox::from_id_salt("mll_style").selected_text(style_label(current)).show_ui(ui, |ui| {
+                for (k, s) in STYLES {
+                    if ui.selectable_label(l.format == k, style_label(s)).clicked() {
+                        // A new style puts this level's number in the text if it had none (a bullet
+                        // its character).
+                        if k == "bullet" {
+                            l.text = "•".into();
+                        } else if l.format == "bullet" || !l.text.contains('%') {
+                            l.text = format!("%{}.", i + 1);
+                        }
+                        l.format = k.to_string();
                     }
                 }
             });
             ui.end_row();
-        }
-        ui.label(tl!("Start at:"));
-        ui.add(egui::DragValue::new(&mut l.start).range(0..=32_767));
-        ui.end_row();
-        if i > 0 {
-            ui.checkbox(&mut l.restart, tl!("Restart list after:"));
-            ui.add_enabled_ui(l.restart, |ui| {
-                let shown = crate::i18n::fmt(tl!("Level {n}"), &[("n", &l.restart_after.clamp(1, i as u8).to_string())]);
-                egui::ComboBox::from_id_salt("mll_restart").selected_text(shown).show_ui(ui, |ui| {
-                    for k in 1..=i as u8 {
-                        ui.selectable_value(&mut l.restart_after, k, crate::i18n::fmt(tl!("Level {n}"), &[("n", &k.to_string())]));
+            if f.more && i > 0 {
+                ui.label(tl!("Include level number from:"));
+                egui::ComboBox::from_id_salt("mll_include").selected_text("").show_ui(ui, |ui| {
+                    for k in 0..i {
+                        if ui.selectable_label(false, crate::i18n::fmt(tl!("Level {n}"), &[("n", &(k + 1).to_string())])).clicked() {
+                            l.text.push_str(&format!("%{}", k + 1));
+                        }
                     }
                 });
+                ui.end_row();
+            }
+            ui.label(tl!("Start at:"));
+            ui.add(egui::DragValue::new(&mut l.start).range(0..=32_767));
+            ui.end_row();
+            if f.more && i > 0 {
+                ui.checkbox(&mut l.restart, tl!("Restart list after:"));
+                ui.add_enabled_ui(l.restart, |ui| {
+                    let shown = crate::i18n::fmt(tl!("Level {n}"), &[("n", &l.restart_after.clamp(1, i as u8).to_string())]);
+                    egui::ComboBox::from_id_salt("mll_restart").selected_text(shown).show_ui(ui, |ui| {
+                        for k in 1..=i as u8 {
+                            ui.selectable_value(&mut l.restart_after, k, crate::i18n::fmt(tl!("Level {n}"), &[("n", &k.to_string())]));
+                        }
+                    });
+                });
+                ui.end_row();
+            }
+            if f.more {
+                ui.label(tl!("Link level to style:"));
+                let shown = styles.iter().find(|(id, _)| *id == l.style).map(|(_, n)| n.clone()).unwrap_or_else(|| tl!("(no style)").to_string());
+                egui::ComboBox::from_id_salt("mll_link").selected_text(shown).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut l.style, String::new(), tl!("(no style)"));
+                    for (id, name) in &styles {
+                        ui.selectable_value(&mut l.style, id.clone(), name);
+                    }
+                });
+                ui.end_row();
+            }
+            ui.label(tl!("Font:"));
+            ui.horizontal(|ui| {
+                let fams = app.previews.families();
+                let prev = app.previews.font_preview_fn();
+                if let Some(f) = crate::widgets::font_combo(ui, "mll_font", 130.0, &l.font, &fams, Some(&*prev)) {
+                    l.font = f;
+                }
+                ui.checkbox(&mut l.bold, tl!("Bold"));
+                ui.checkbox(&mut l.italic, tl!("Italic"));
             });
             ui.end_row();
+            if f.more {
+                ui.label("");
+                ui.checkbox(&mut l.legal, tl!("Legal style numbering"));
+                ui.end_row();
+            }
+        });
+    }
+    ui.horizontal(|ui| {
+        heading(ui, "Position");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button(tl!("Set for All Levels…")).clicked() {
+                f.set_all_open = !f.set_all_open;
+            }
+        });
+    });
+    if f.set_all_open {
+        ui.group(|ui| {
+            ui.label(egui::RichText::new(tl!("Set for All Levels")).font(semibold(12.5)));
+            egui::Grid::new("mll_set_all").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+                ui.label(tl!("Bullet/number position for first level:"));
+                ui.add(len(&mut f.set_all_bullet, unit));
+                ui.end_row();
+                ui.label(tl!("Text position for first level:"));
+                ui.add(len(&mut f.set_all_text, unit));
+                ui.end_row();
+                ui.label(tl!("Additional indent for each level:"));
+                ui.add(len(&mut f.set_all_step, unit));
+                ui.end_row();
+            });
+            ui.horizontal(|ui| {
+                if ui.button(tl!("OK")).clicked() {
+                    for (idx, lv) in f.levels.iter_mut().enumerate() {
+                        lv.aligned_at = f.set_all_bullet + idx as f32 * f.set_all_step;
+                        lv.indent_at = f.set_all_text + idx as f32 * f.set_all_step;
+                        lv.tab_at = f.set_all_text + idx as f32 * f.set_all_step;
+                    }
+                    f.set_all_open = false;
+                }
+                if ui.button(tl!("Cancel")).clicked() {
+                    f.set_all_open = false;
+                }
+            });
+        });
+    }
+    {
+        let Some(l) = f.levels.get_mut(i) else { return true };
+        egui::Grid::new("mll_position").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+            ui.label(tl!("Number alignment:"));
+            ui.horizontal(|ui| {
+                for (v, s) in [("left", "Left"), ("center", "Center"), ("right", "Right")] {
+                    ui.radio_value(&mut l.align, v.to_string(), tl!(s));
+                }
+            });
+            ui.end_row();
+            ui.label(tl!("Aligned at:"));
+            ui.add(len(&mut l.aligned_at, unit));
+            ui.end_row();
+            ui.label(tl!("Text indent at:"));
+            ui.add(len(&mut l.indent_at, unit));
+            ui.end_row();
+            if f.more {
+                ui.label(tl!("Follow number with:"));
+                let follow = |k: &str| match k {
+                    "space" => tl!("Space"),
+                    "nothing" => tl!("Nothing"),
+                    _ => tl!("Tab character"),
+                };
+                egui::ComboBox::from_id_salt("mll_follow").selected_text(follow(&l.follow)).show_ui(ui, |ui| {
+                    for k in ["tab", "space", "nothing"] {
+                        ui.selectable_value(&mut l.follow, k.to_string(), follow(k));
+                    }
+                });
+                ui.end_row();
+                ui.add_enabled(l.follow == "tab", egui::Checkbox::new(&mut l.tab_on, tl!("Add tab stop at:")));
+                ui.add_enabled(l.follow == "tab" && l.tab_on, len(&mut l.tab_at, unit));
+                ui.end_row();
+            }
+        });
+    }
+    let mut more_clicked = false;
+    ui.horizontal(|ui| {
+        let more_label = if f.more { tl!("<< Less") } else { tl!("More >>") };
+        if ui.button(more_label).clicked() {
+            more_clicked = true;
         }
-        ui.label(tl!("Link level to style:"));
-        let shown = styles.iter().find(|(id, _)| *id == l.style).map(|(_, n)| n.clone()).unwrap_or_else(|| tl!("(no style)").to_string());
-        egui::ComboBox::from_id_salt("mll_link").selected_text(shown).show_ui(ui, |ui| {
-            ui.selectable_value(&mut l.style, String::new(), tl!("(no style)"));
-            for (id, name) in &styles {
-                ui.selectable_value(&mut l.style, id.clone(), name);
-            }
-        });
-        ui.end_row();
-        ui.label(tl!("Font:"));
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut l.font).desired_width(110.0));
-            ui.checkbox(&mut l.bold, tl!("Bold"));
-            ui.checkbox(&mut l.italic, tl!("Italic"));
-        });
-        ui.end_row();
-        ui.label("");
-        ui.checkbox(&mut l.legal, tl!("Legal style numbering"));
-        ui.end_row();
     });
-    heading(ui, "Position");
-    egui::Grid::new("mll_position").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-        ui.label(tl!("Number alignment:"));
-        ui.horizontal(|ui| {
-            for (v, s) in [("left", "Left"), ("center", "Center"), ("right", "Right")] {
-                ui.radio_value(&mut l.align, v.to_string(), tl!(s));
-            }
-        });
-        ui.end_row();
-        ui.label(tl!("Aligned at:"));
-        ui.add(len(&mut l.aligned_at, unit));
-        ui.end_row();
-        ui.label(tl!("Text indent at:"));
-        ui.add(len(&mut l.indent_at, unit));
-        ui.end_row();
-        ui.label(tl!("Follow number with:"));
-        let follow = |k: &str| match k {
-            "space" => tl!("Space"),
-            "nothing" => tl!("Nothing"),
-            _ => tl!("Tab character"),
-        };
-        egui::ComboBox::from_id_salt("mll_follow").selected_text(follow(&l.follow)).show_ui(ui, |ui| {
-            for k in ["tab", "space", "nothing"] {
-                ui.selectable_value(&mut l.follow, k.to_string(), follow(k));
-            }
-        });
-        ui.end_row();
-        ui.add_enabled(l.follow == "tab", egui::Checkbox::new(&mut l.tab_on, tl!("Add tab stop at:")));
-        ui.add_enabled(l.follow == "tab" && l.tab_on, len(&mut l.tab_at, unit));
-        ui.end_row();
-    });
+    if more_clicked {
+        f.more = !f.more;
+    }
     let (ok, cancel) = buttons(ui, tl!("OK"));
     if ok && let Err(e) = app.run("list.define", f.params()) {
         app.status(e);
@@ -588,5 +671,26 @@ mod tests {
         let mut b = app();
         b.apply_prefs(saved);
         assert_eq!(b.session.prefs.markup.changed_lines, wordcraft_layout::display::ChangeBar::Right);
+    }
+
+    #[test]
+    fn set_for_all_levels_sets_incremental_indents() {
+        let mut a = app();
+        a.run("list.define", json!({})).unwrap();
+        let Some(Dialog::DefineList { form }) = &mut a.dialog else { panic!("dialog") };
+        form.set_all_bullet = 0.0;
+        form.set_all_text = 0.5;
+        form.set_all_step = 0.5;
+        for (idx, lv) in form.levels.iter_mut().enumerate() {
+            lv.aligned_at = form.set_all_bullet + idx as f32 * form.set_all_step;
+            lv.indent_at = form.set_all_text + idx as f32 * form.set_all_step;
+            lv.tab_at = form.set_all_text + idx as f32 * form.set_all_step;
+        }
+        assert_eq!(form.levels[0].aligned_at, 0.0);
+        assert_eq!(form.levels[0].indent_at, 0.5);
+        assert_eq!(form.levels[1].aligned_at, 0.5);
+        assert_eq!(form.levels[1].indent_at, 1.0);
+        assert_eq!(form.levels[2].aligned_at, 1.0);
+        assert_eq!(form.levels[2].indent_at, 1.5);
     }
 }

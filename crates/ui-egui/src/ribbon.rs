@@ -431,7 +431,8 @@ pub(crate) fn language_name(tag: Option<&str>) -> String {
 /// The language at the caret (resolved through the styles), translated, for the status bar.
 pub(crate) fn caret_language(app: &WordApp) -> String {
     let s = &app.session;
-    let style = s.doc.para_at(&s.sel.focus).and_then(|p| p.props.style.clone());
+    let pos = s.active_para_pos();
+    let style = s.doc.para_at(&pos).and_then(|p| p.props.style.clone());
     let rc = s.doc.styles.resolve_char(style.as_deref(), &s.typing_props());
     tl!(&language_name(rc.lang.as_deref())).to_string()
 }
@@ -455,7 +456,7 @@ pub(crate) fn language_menu(ui: &mut Ui, app: &mut WordApp) {
 /// A menu item with a check mark when `checked` (the current choice of several).
 fn mi_check(ui: &mut Ui, app: &mut WordApp, label: &str, checked: bool, id: &str, params: Value) {
     // An invisible mark keeps the unchecked labels aligned with the checked one.
-    let mark = egui::RichText::new("✓");
+    let mark = egui::RichText::new("✓ ");
     let mark = if checked { mark } else { mark.color(egui::Color32::TRANSPARENT) };
     let enabled = crate::widgets::enabled(app, id);
     let resp = ui.add_enabled(enabled, egui::Button::new((mark, tl!(label))).selected(checked).min_size(vec2(200.0, 0.0)));
@@ -539,7 +540,7 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
                 let sizes: Vec<String> =
                     wordcraft_engine::cmd::format::SIZES.iter().map(|s| if s.fract() == 0.0 { format!("{s:.0}") } else { s.to_string() }).collect();
                 if let Some(v) = combo(ui, "size", 52.0, &size, &sizes, None)
-                    && let Ok(x) = v.trim().parse::<f64>()
+                    && let Ok(x) = v.trim().replace(',', ".").parse::<f64>()
                 {
                     let _ = app.run("format.size", json!({"size": x}));
                 }
@@ -626,11 +627,11 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
         });
     });
     group(ui, "Paragraph", Some("para.dialog"), app, |ui, app| {
-        let rp = app.session.doc.para_at(&app.session.sel.focus).map(|p| app.session.doc.styles.resolve_para(&p.props));
+        let rp = app.session.resolved_para();
         // The buttons show alignment as seen on the page (Align Right is a right-to-left paragraph's start).
-        let align = rp.as_ref().map(|r| r.align.visual(r.bidi)).unwrap_or_default();
-        let rtl = rp.as_ref().is_some_and(|r| r.bidi);
-        let lists = wordcraft_engine::cmd::para::list_buttons(&app.session.doc, rp.as_ref().and_then(|r| r.numbering));
+        let align = rp.align.visual(rp.bidi);
+        let rtl = rp.bidi;
+        let lists = wordcraft_engine::cmd::para::list_buttons(&app.session.doc, rp.numbering);
         stack(ui, |ui| {
             crate::widgets::row(ui, |ui| {
                 split(ui, app, "bullets", "Bullets", "para.bullets", json!({}), lists.bullets, None, |ui, app| {
@@ -699,12 +700,19 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
                 small(ui, app, "textRtl", None, "Right-to-Left Text Direction", "para.rtl", json!({}), rtl);
                 ui.add_space(4.0);
                 menu_button(ui, app, "lineSpacing", None, "Line and Paragraph Spacing", false, "para.lineSpacing", |ui, app| {
-                    for v in [1.0, 1.15, 1.5, 2.0, 2.5, 3.0] {
-                        mi(ui, app, &format!("{v}"), "para.lineSpacing", json!({"value": v}));
+                    let rp = app.session.resolved_para();
+                    let cur_ls = rp.line_spacing;
+                    for v in [1.0f32, 1.15, 1.5, 2.0, 2.5, 3.0] {
+                        let checked = matches!(cur_ls, wordcraft_doc::props::LineSpacing::Multiple(x) if (x - v).abs() < 0.05);
+                        let label = if (v - 1.15).abs() < 0.001 { "1.15".to_string() } else { format!("{v:.1}") };
+                        mi_check(ui, app, &label, checked, "para.lineSpacing", json!({"value": v}));
                     }
                     ui.separator();
-                    mi(ui, app, "Add Space Before Paragraph", "para.addSpaceBefore", json!({}));
-                    mi(ui, app, "Remove Space After Paragraph", "para.removeSpaceAfter", json!({}));
+                    let (has_before, has_after) = (rp.space_before > 0.0, rp.space_after > 0.0);
+                    let before_label = if has_before { "Remove Space Before Paragraph" } else { "Add Space Before Paragraph" };
+                    let after_label = if has_after { "Remove Space After Paragraph" } else { "Add Space After Paragraph" };
+                    mi(ui, app, before_label, "para.addSpaceBefore", json!({}));
+                    mi(ui, app, after_label, "para.removeSpaceAfter", json!({}));
                     mi(ui, app, "Line Spacing Options…", "para.dialog", json!({}));
                 });
                 split(ui, app, "shading", "Shading", "para.shading", json!({"color": app.canvas.last_shading.clone()}), false, None, |ui, app| {
@@ -1126,10 +1134,12 @@ fn layout(app: &mut WordApp, ui: &mut Ui) {
             }
         });
         menu_button(ui, app, "margins", Some("Margins"), "Margins", true, "layout.margins", |ui, app| {
+            let n_label = format!("Normal  {} all", crate::options::length(72.0));
+            let nr_label = format!("Narrow  {} all", crate::options::length(36.0));
             for (l, k) in [
-                ("Normal  1\" all", "normal"),
+                (n_label.as_str(), "normal"),
                 ("Skripsi  4-4-3-3 cm", "skripsi"),
-                ("Narrow  0.5\" all", "narrow"),
+                (nr_label.as_str(), "narrow"),
                 ("Moderate", "moderate"),
                 ("Wide", "wide"),
                 ("Mirrored", "mirrored"),
@@ -1190,8 +1200,7 @@ fn layout(app: &mut WordApp, ui: &mut Ui) {
         });
     });
     group(ui, "Paragraph", Some("para.dialog"), app, |ui, app| {
-        let rp = app.session.doc.para_at(&app.session.sel.focus).map(|p| app.session.doc.styles.resolve_para(&p.props));
-        let Some(rp) = rp else { return };
+        let rp = app.session.resolved_para();
         // #654: header + two rows of 20 px fields fit the content height above the group title
         // (1.5 pt between rows; 3 ran 2.5 pt into it); labels and fields sit on shared columns,
         // every field the same width.
@@ -1701,7 +1710,8 @@ fn view(app: &mut WordApp, ui: &mut Ui) {
 fn outlining(app: &mut WordApp, ui: &mut Ui) {
     use wordcraft_engine::layout::outline::{BODY, para_level};
     let o = app.session.view.outline.clone();
-    let level = app.session.doc.para_at(&app.session.sel.focus).map(|p| para_level(&app.session.doc, p)).unwrap_or(BODY);
+    let pos = app.session.active_para_pos();
+    let level = app.session.doc.para_at(&pos).map(|p| para_level(&app.session.doc, p)).unwrap_or(BODY);
     let name = |l: u8| if l >= BODY { tl!("Body Text").to_string() } else { crate::i18n::fmt(tl!("Level {n}"), &[("n", &l.to_string())]) };
     group(ui, "Outline Tools", None, app, |ui, app| {
         stack(ui, |ui| {
@@ -2312,7 +2322,8 @@ fn cell_size_boxes(ui: &mut Ui, app: &mut WordApp) {
         crate::widgets::row(ui, |ui| {
             ui.add_sized(vec2(48.0, 18.0), egui::Label::new(egui::RichText::new(tl!(label)).small()));
             let mut v = pt / k;
-            let r = ui.add_sized(vec2(72.0, 18.0), egui::DragValue::new(&mut v).speed(0.01).range(0.02..=22.0).measure(unit).max_decimals(2));
+            let r = ui
+                .add_sized(vec2(72.0, 18.0), egui::DragValue::new(&mut v).speed(3.6 / k).range(0.02..=22.0 * 72.0 / k).measure(unit).max_decimals(2));
             if r.changed() {
                 out = Some((v * k, r.dragged() && !r.drag_started()));
             }
@@ -2598,5 +2609,27 @@ mod tests {
         let cm = pt / k;
         assert!((cm - 144.0 / wordcraft_geom::PT_PER_CM).abs() < 1e-4);
         assert!((cm * k - pt).abs() < 1e-4);
+    }
+
+    #[test]
+    fn line_spacing_resolved_matches_selection() {
+        let mut app = WordApp::new(Session::new(wordcraft_doc::Document::new()), crate::Services::default());
+        app.run("text.insert", json!({"text": "First paragraph"})).unwrap();
+        app.run("text.newParagraph", json!({})).unwrap();
+        app.run("text.insert", json!({"text": "Second paragraph"})).unwrap();
+
+        // Move caret to first paragraph and select it
+        app.session.sel = wordcraft_engine::Selection::caret(wordcraft_doc::Pos::body(0, 0));
+        app.run("select.paragraph", json!({})).unwrap();
+        assert_eq!(app.session.sel.focus.path, wordcraft_doc::Path::top(1));
+        assert_eq!(app.session.sel.focus.off, 0);
+
+        // Apply line spacing 1.5 to first paragraph:
+        app.run("para.lineSpacing", json!({"value": 1.5})).unwrap();
+        assert_eq!(app.session.resolved_para().line_spacing, wordcraft_doc::props::LineSpacing::Multiple(1.5));
+
+        // Now change it to 1.0:
+        app.run("para.lineSpacing", json!({"value": 1.0})).unwrap();
+        assert_eq!(app.session.resolved_para().line_spacing, wordcraft_doc::props::LineSpacing::Multiple(1.0));
     }
 }

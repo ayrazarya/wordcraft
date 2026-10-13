@@ -2037,13 +2037,13 @@ fn rulers(app: &mut WordApp, ui: &mut Ui, h: Rect, v: Rect, rects: &[Rect], layo
     hp.rect_filled(bar, 0.0, t.ruler_margin);
     let text = Rect::from_min_max(pos2(x0 + page.body.x * scale, bar.min.y), pos2(x0 + page.body.right() * scale, bar.max.y));
     hp.rect_filled(text, 0.0, t.ruler);
-    let rp = app.session.doc.para_at(&app.session.sel.focus).map(|para| app.session.doc.styles.resolve_para(&para.props));
+    let rp = app.session.resolved_para();
     // Graduations in the File › Options unit.
     let (unit, div, step) = ruler_scale(app.session.units());
     // The caret paragraph's reading direction anchors the whole scale (#692): for a right-to-left
     // paragraph it runs from the page's right edge and the numbers increase right-to-left, so the
     // ruler matches the indent and tab markers, which sit at the paragraph's start edge.
-    let rtl = rp.as_ref().is_some_and(|rp| rp.bidi);
+    let rtl = rp.bidi;
     let origin = if rtl { page.w - page.body.right() } else { page.body.x };
     // A distance along the reading direction (points from the page's start edge) and back.
     let sx = |d: f32| ruler_x(d, x0, scale, page.w, rtl);
@@ -2076,7 +2076,7 @@ fn rulers(app: &mut WordApp, ui: &mut Ui, h: Rect, v: Rect, rects: &[Rect], layo
     let (col_x, w) = crate::table_ruler::text_area(app, layout, pi).unwrap_or((page.body.x, page.body.w));
     // Where the paragraph starts, from the page's start edge (the right edge when right-to-left).
     let start = if rtl { page.w - (col_x + w) } else { col_x };
-    if let Some(rp) = rp {
+    {
         // Indents and tabs are measured from the paragraph's start edge: the right margin of a
         // right-to-left paragraph, where the start-indent markers sit.
         let px = |s: f32| sx(start + s);

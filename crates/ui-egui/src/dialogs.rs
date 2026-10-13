@@ -239,6 +239,7 @@ pub enum Dialog {
         bottom: f32,
         left: f32,
         right: f32,
+        gutter: f32,
         landscape: bool,
         /// Document grid: kind (0 none, 1 lines, 2 lines and characters, 3 snap to characters),
         /// lines per page and characters per line; `grid_was` as opened (applied only if changed).
@@ -993,8 +994,7 @@ impl Dialog {
                 d
             }
             "paragraph" | "asianTypography" => {
-                let rp = app.session.doc.para_at(&app.session.sel.focus).map(|p| app.session.doc.styles.resolve_para(&p.props));
-                let rp = rp?;
+                let rp = app.session.resolved_para();
                 let line = match rp.line_spacing {
                     wordcraft_doc::props::LineSpacing::Multiple(m) => m,
                     _ => 1.0,
@@ -1076,6 +1076,7 @@ impl Dialog {
                     bottom: sp.margin_bottom / crate::options::unit().pt_per_unit(),
                     left: sp.margin_left / crate::options::unit().pt_per_unit(),
                     right: sp.margin_right / crate::options::unit().pt_per_unit(),
+                    gutter: sp.gutter / crate::options::unit().pt_per_unit(),
                     landscape: sp.landscape,
                     grid,
                     grid_was: grid,
@@ -1517,8 +1518,8 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 let theme = app.session.doc.settings.theme_colors.clone();
                 color_field(ui, &theme, color, "Automatic", "auto");
                 ui.end_row();
-                ui.label(tl!("Spacing (pt):"));
-                ui.add(egui::DragValue::new(spacing).speed(0.1).range(-20.0..=20.0));
+                ui.label(tl!("Spacing:"));
+                ui.add(egui::DragValue::new(spacing).speed(0.1).range(-20.0..=20.0).measure(wordcraft_geom::Unit::Points).max_decimals(2));
                 ui.end_row();
             });
             ui.separator();
@@ -1632,10 +1633,41 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                         ui.label(tl!("Before:"));
                         ui.add(egui::DragValue::new(before).speed(1.0).range(0.0..=1584.0).measure(wordcraft_geom::Unit::Points).max_decimals(2));
                         ui.label(tl!("Line spacing:"));
-                        ui.add(egui::DragValue::new(line).speed(0.05).range(0.5..=5.0));
+                        let mode = if (*line - 1.0).abs() < 0.02 {
+                            "Single"
+                        } else if (*line - 1.5).abs() < 0.02 {
+                            "1.5 lines"
+                        } else if (*line - 2.0).abs() < 0.02 {
+                            "Double"
+                        } else {
+                            "Multiple"
+                        };
+                        egui::ComboBox::from_id_salt("para_ls_mode").selected_text(tl!(mode)).width(85.0).show_ui(ui, |ui| {
+                            if ui.selectable_label((*line - 1.0).abs() < 0.02, tl!("Single")).clicked() {
+                                *line = 1.0;
+                                ui.close();
+                            }
+                            if ui.selectable_label((*line - 1.5).abs() < 0.02, tl!("1.5 lines")).clicked() {
+                                *line = 1.5;
+                                ui.close();
+                            }
+                            if ui.selectable_label((*line - 2.0).abs() < 0.02, tl!("Double")).clicked() {
+                                *line = 2.0;
+                                ui.close();
+                            }
+                            if ui.selectable_label(mode == "Multiple", tl!("Multiple")).clicked() {
+                                if (*line - 1.0).abs() < 0.02 || (*line - 1.5).abs() < 0.02 || (*line - 2.0).abs() < 0.02 {
+                                    *line = 1.15;
+                                }
+                                ui.close();
+                            }
+                        });
                         ui.end_row();
                         ui.label(tl!("After:"));
                         ui.add(egui::DragValue::new(after).speed(1.0).range(0.0..=1584.0).measure(wordcraft_geom::Unit::Points).max_decimals(2));
+                        ui.label(tl!("At:"));
+                        let at_enabled = mode == "Multiple";
+                        ui.add_enabled(at_enabled, egui::DragValue::new(line).speed(0.05).range(0.5..=5.0).max_decimals(2));
                         ui.end_row();
                     });
                     ui.checkbox(&mut opts[1], tl!("Don't add space between paragraphs of the same style"));
@@ -1865,7 +1897,7 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
             ok || cancel
         }
-        Dialog::PageSetup { top, bottom, left, right, landscape, rtl, grid, grid_was } => {
+        Dialog::PageSetup { top, bottom, left, right, gutter, landscape, rtl, grid, grid_was } => {
             ui.label(egui::RichText::new(tl!("Margins")).font(semibold(12.5)));
             egui::Grid::new("ps").num_columns(4).show(ui, |ui| {
                 ui.label(tl!("Top:"));
@@ -1879,6 +1911,11 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ui.add(egui::DragValue::new(left).speed(3.6 / crate::options::unit().pt_per_unit()).measure(crate::options::unit()).max_decimals(2));
                 ui.label(tl!("Right:"));
                 ui.add(egui::DragValue::new(right).speed(3.6 / crate::options::unit().pt_per_unit()).measure(crate::options::unit()).max_decimals(2));
+                ui.end_row();
+                ui.label(tl!("Gutter:"));
+                ui.add(
+                    egui::DragValue::new(gutter).speed(3.6 / crate::options::unit().pt_per_unit()).measure(crate::options::unit()).max_decimals(2),
+                );
                 ui.end_row();
             });
             ui.label(egui::RichText::new(tl!("Orientation")).font(semibold(12.5)));
@@ -1908,8 +1945,16 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let (ok, cancel) = buttons(ui, tl!("OK"));
             if ok {
                 let _ = app.run("layout.orientation", json!({"value": if *landscape { "landscape" } else { "portrait" }}));
-                let _ =
-                    app.run("layout.margins", json!({"top": *top * crate::options::unit().pt_per_unit(), "bottom": *bottom * crate::options::unit().pt_per_unit(), "left": *left * crate::options::unit().pt_per_unit(), "right": *right * crate::options::unit().pt_per_unit()}));
+                let _ = app.run(
+                    "layout.margins",
+                    json!({
+                        "top": *top * crate::options::unit().pt_per_unit(),
+                        "bottom": *bottom * crate::options::unit().pt_per_unit(),
+                        "left": *left * crate::options::unit().pt_per_unit(),
+                        "right": *right * crate::options::unit().pt_per_unit(),
+                        "gutter": *gutter * crate::options::unit().pt_per_unit(),
+                    }),
+                );
                 if grid != grid_was {
                     let kind = ["none", "lines", "linesAndChars", "snapToChars"].get(grid.0 as usize).copied().unwrap_or("none");
                     let mut v = json!({"type": kind});
@@ -2746,8 +2791,10 @@ fn recipient_list(app: &mut WordApp, ui: &mut Ui, fields: &mut Vec<String>, rows
 /// The Table Properties dialog's fields: Table, Row, Column and Cell sections.
 fn table_properties(ui: &mut Ui, f: &mut TableForm) {
     let unit = crate::options::unit();
+    let k = unit.pt_per_unit();
     fn len(v: &mut f32, lo: f32, unit: wordcraft_geom::Unit) -> egui::DragValue<'_> {
-        egui::DragValue::new(v).speed(0.01).range(lo..=22.0).measure(unit).max_decimals(2)
+        let k = unit.pt_per_unit();
+        egui::DragValue::new(v).speed(3.6 / k).range(lo..=22.0 * 72.0 / k).measure(unit).max_decimals(2)
     }
     let heading = |ui: &mut Ui, s: &str| {
         ui.add_space(4.0);
@@ -2766,7 +2813,10 @@ fn table_properties(ui: &mut Ui, f: &mut TableForm) {
         });
         ui.end_row();
         ui.label(tl!("Indent from left:"));
-        ui.add_enabled(f.align == "left", egui::DragValue::new(&mut f.indent).speed(0.01).range(-11.0..=22.0).measure(unit).max_decimals(2));
+        ui.add_enabled(
+            f.align == "left",
+            egui::DragValue::new(&mut f.indent).speed(3.6 / k).range(-11.0 * 72.0 / k..=22.0 * 72.0 / k).measure(unit).max_decimals(2),
+        );
         ui.end_row();
         ui.label(tl!("Table direction:"));
         ui.horizontal(|ui| {
@@ -2843,7 +2893,7 @@ fn apply_paragraph(
         "keepNext": keep_next, "keepLines": keep_lines, "pageBreakBefore": page_break, "widowControl": widow,
     });
     // The dialog edits only multiples: an untouched value keeps Exactly and At Least.
-    if line != line_was
+    if (line - line_was).abs() > 0.001
         && let Some(m) = props.as_object_mut()
     {
         m.insert("lineSpacing".into(), json!({"rule": "multiple", "value": line}));
@@ -3538,6 +3588,33 @@ mod tests {
             ([false; 4], [false; 4]),
         );
         assert_eq!(props(&app).line_spacing, Some(LineSpacing::Multiple(1.5)));
+
+        // When a paragraph is selected, dialog reads active paragraph and changing to 1.0 applies properly.
+        let mut app = app_with("First\nSecond");
+        app.session.sel = wordcraft_engine::Selection::caret(wordcraft_doc::Pos::body(0, 0));
+        let _ = app.run("select.paragraph", json!({}));
+        let _ = app.run("para.lineSpacing", json!({"value": 1.5}));
+        let Some(Dialog::Paragraph {
+            rtl, align, left, right, first, before, after, line, line_was, keep_next, keep_lines, page_break, widow, ..
+        }) = Dialog::open("paragraph", &mut app)
+        else {
+            panic!("no paragraph dialog")
+        };
+        assert_eq!(line, 1.5);
+        apply_paragraph(
+            &mut app,
+            rtl,
+            &align,
+            left,
+            right,
+            first,
+            before,
+            after,
+            (1.0, line_was),
+            [keep_next, keep_lines, page_break, widow],
+            ([false; 4], [false; 4]),
+        );
+        assert_eq!(app.session.resolved_para().line_spacing, wordcraft_doc::props::LineSpacing::Multiple(1.0));
     }
 
     #[test]
@@ -3708,5 +3785,14 @@ mod tests {
         assert_eq!(wordcraft_geom::parse_measure("0.5 cm", u), Some(0.5 * wordcraft_geom::PT_PER_CM));
         assert_eq!(wordcraft_geom::parse_measure("0,5 cm", u), Some(0.5 * wordcraft_geom::PT_PER_CM));
         assert_eq!(wordcraft_geom::parse_measure("1.5 li", u), Some(18.0));
+    }
+
+    #[test]
+    fn page_setup_dialog_includes_gutter_margin() {
+        let mut app = app_with("Document");
+        let _ = app.run("layout.margins", json!({"gutter": 28.35}));
+        let Some(Dialog::PageSetup { gutter, .. }) = Dialog::open("pageSetup", &mut app) else { panic!() };
+        let k = crate::options::unit().pt_per_unit();
+        assert!((gutter * k - 28.35).abs() < 0.1);
     }
 }

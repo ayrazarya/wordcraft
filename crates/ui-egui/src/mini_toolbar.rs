@@ -128,7 +128,7 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context, selection: Rect, viewport: R
 fn content(app: &mut WordApp, ui: &mut egui::Ui, t: &Tokens) {
     let st: Value = app.session.run("format.state", &json!({})).unwrap_or_default();
     let flag = |k: &str| st.get(k).and_then(Value::as_bool).unwrap_or(false);
-    let align = app.session.doc.para_at(&app.session.sel.focus).map(|p| app.session.doc.styles.resolve_para(&p.props).align).unwrap_or_default();
+    let align = app.session.resolved_para().align;
     let row = |ui: &mut egui::Ui, app: &mut WordApp, add: &dyn Fn(&mut egui::Ui, &mut WordApp)| {
         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), ROW_H), Layout::left_to_right(Align::Center), |ui| {
             ui.set_min_height(ROW_H);

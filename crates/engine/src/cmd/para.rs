@@ -237,20 +237,9 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-/// Resolved paragraph props at the caret.
+/// Resolved paragraph props at the caret / selection.
 fn cur(s: &Session) -> wordcraft_doc::resolve::ResolvedPara {
-    // A selection ending at the next paragraph's start doesn't format that paragraph (#418), so
-    // its state comes from the last paragraph it does cover.
-    let (a, b) = s.sel.ordered();
-    let mut at = s.sel.focus.clone();
-    if let Some(last) = s.doc.para_paths_in(&a, &b).pop()
-        && last != at.path
-        && at == b
-    {
-        at = Pos { path: last, off: 0, ..at };
-    }
-    let props = s.doc.para_at(&at).map(|p| p.props.clone()).unwrap_or_default();
-    s.doc.styles.resolve_para(&props)
+    s.resolved_para()
 }
 
 pub fn fmt(s: &mut Session, f: &dyn Fn(&mut ParaProps)) -> CmdResult {

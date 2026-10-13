@@ -43,7 +43,7 @@ impl TabsForm {
     /// The caret paragraph's stops and the document's default interval.
     pub fn read(app: &WordApp) -> Option<TabsForm> {
         let s = &app.session;
-        let rp = s.doc.para_at(&s.sel.focus).map(|p| s.doc.styles.resolve_para(&p.props))?;
+        let rp = s.resolved_para();
         let k = unit().pt_per_unit();
         let stops: Vec<TabStop> = rp.tabs.iter().copied().filter(|t| t.align != TabAlign::Clear && t.pos.is_finite()).take(64).collect();
         let first = stops.first().copied();
@@ -364,7 +364,7 @@ pub struct BordersForm {
 impl BordersForm {
     pub fn read(app: &WordApp, tab: u8) -> Option<BordersForm> {
         let s = &app.session;
-        let rp = s.doc.para_at(&s.sel.focus).map(|p| s.doc.styles.resolve_para(&p.props))?;
+        let rp = s.resolved_para();
         let sect = wordcraft_engine::cmd::page::sect(s);
         let mut f = BordersForm {
             tab: tab.min(2),
