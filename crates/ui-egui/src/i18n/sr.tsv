@@ -2089,3 +2089,15 @@
 	Start-up	Покретање
 	Show the Start screen when WordCraft starts	Прикажи почетни екран при покретању програма WordCraft
 	On: WordCraft opens on File › Home, with a blank document, the templates and your recent documents. Off: it opens a blank document.	Укључено: WordCraft се отвара на Фајл › Почетак, са празним документом, шаблонима и недавним документима. Искључено: отвара празан документ.
+	AI Assistant	АИ помоћник
+	AI Fix Grammar	АИ исправка граматике
+	AI Generate Draft	АИ генерисање нацрта
+	AI Get Document Context	Добави АИ контекст документа
+	AI Insert Formatted Text	Уметни форматирани АИ текст
+	AI Rewrite	АИ преписивање
+	AI Sentence Suggestions	АИ предлози реченица
+	AI Summarize	АИ сажетак
+	Arrange All	Распореди све
+	Switch Windows	Промени прозоре
+	Synchronous Scrolling	Синхронизовано скроловање
+	View Side by Side	Приказ један поред другог

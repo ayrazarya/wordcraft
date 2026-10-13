@@ -80,6 +80,16 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32, accent: Color32) {
     let green = Color32::from_rgb(0x2E, 0x8B, 0x57);
     let orange = Color32::from_rgb(0xE0, 0x7B, 0x1F);
     match name {
+        // AI / Assistant
+        "sparkle" | "ai" => {
+            pen.line_c(&[(10.0, 2.5), (10.0, 17.5)], a);
+            pen.line_c(&[(2.5, 10.0), (17.5, 10.0)], a);
+            pen.line(&[(5.0, 5.0), (15.0, 15.0)]);
+            pen.line(&[(5.0, 15.0), (15.0, 5.0)]);
+            pen.fcircle(10.0, 10.0, 2.2, a);
+            pen.fcircle(16.0, 4.0, 1.2, c);
+            pen.fcircle(4.0, 16.0, 1.0, c);
+        }
         // Clipboard
         "paste" => {
             pen.rect(4.0, 3.5, 14.0, 17.0, c);

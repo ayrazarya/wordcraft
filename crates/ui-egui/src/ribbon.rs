@@ -757,6 +757,10 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
     group(ui, "Editor", None, app, |ui, app| {
         big(ui, app, "editor", "Editor", "review.spelling", json!({}), false);
     });
+    group(ui, "AI", None, app, |ui, app| {
+        let active = app.session.view.ai_pane;
+        big(ui, app, "sparkle", "AI Assistant", "view.aiPane", json!({}), active);
+    });
 }
 
 fn insert(app: &mut WordApp, ui: &mut Ui) {
@@ -1124,6 +1128,7 @@ fn layout(app: &mut WordApp, ui: &mut Ui) {
         menu_button(ui, app, "margins", Some("Margins"), "Margins", true, "layout.margins", |ui, app| {
             for (l, k) in [
                 ("Normal  1\" all", "normal"),
+                ("Skripsi  4-4-3-3 cm", "skripsi"),
                 ("Narrow  0.5\" all", "narrow"),
                 ("Moderate", "moderate"),
                 ("Wide", "wide"),
@@ -1215,7 +1220,10 @@ fn layout(app: &mut WordApp, ui: &mut Ui) {
                 let _ = app.run("para.indents", json!({"left": l * k}));
             }
             spaced(ui, egui::RichText::new(tl!("Before:")).small());
-            if ui.add_sized(FIELD, egui::DragValue::new(&mut b).speed(1.0).range(0.0..=1584.0).suffix(format!(" {}", tl!("pt")))).changed() {
+            if ui
+                .add_sized(FIELD, egui::DragValue::new(&mut b).speed(1.0).range(0.0..=1584.0).measure(wordcraft_geom::Unit::Points).max_decimals(2))
+                .changed()
+            {
                 let _ = app.run("para.spacing", json!({"before": b}));
             }
             ui.end_row();
@@ -1226,7 +1234,10 @@ fn layout(app: &mut WordApp, ui: &mut Ui) {
                 let _ = app.run("para.indents", json!({"right": r * k}));
             }
             spaced(ui, egui::RichText::new(tl!("After:")).small());
-            if ui.add_sized(FIELD, egui::DragValue::new(&mut a).speed(1.0).range(0.0..=1584.0).suffix(format!(" {}", tl!("pt")))).changed() {
+            if ui
+                .add_sized(FIELD, egui::DragValue::new(&mut a).speed(1.0).range(0.0..=1584.0).measure(wordcraft_geom::Unit::Points).max_decimals(2))
+                .changed()
+            {
                 let _ = app.run("para.spacing", json!({"after": a}));
             }
             ui.end_row();
@@ -1641,6 +1652,10 @@ fn view(app: &mut WordApp, ui: &mut Ui) {
             if ui.checkbox(&mut w, tl!("Hide White Space")).changed() {
                 let _ = app.run("view.hideWhiteSpace", json!({"value": w}));
             }
+            let mut a = v.ai_pane;
+            if ui.checkbox(&mut a, tl!("AI Assistant")).changed() {
+                let _ = app.run("view.aiPane", json!({"value": a}));
+            }
         });
     });
     group(ui, "Zoom", None, app, |ui, app| {
@@ -1844,17 +1859,19 @@ fn chart_design(app: &mut WordApp, ui: &mut Ui) {
     group(ui, "Size", None, app, |ui, app| {
         let (w0, h0) =
             wordcraft_engine::cmd::objects::selected(&app.session).and_then(|(_, o)| o.frame().map(|(w, h, _)| (w, h))).unwrap_or((0.0, 0.0));
+        let u = app.session.units();
+        let k = u.pt_per_unit();
         stack(ui, |ui| {
             for (label, key, v0) in [("H:", "height", h0), ("W:", "width", w0)] {
                 crate::widgets::row(ui, |ui| {
                     ui.label(egui::RichText::new(tl!(label)).small());
-                    let mut v = v0;
-                    let r = ui.add(egui::DragValue::new(&mut v).speed(1.0).range(36.0..=2000.0).suffix(" pt"));
+                    let mut v = v0 / k;
+                    let r = ui.add(egui::DragValue::new(&mut v).speed(3.6 / k).range(36.0 / k..=2000.0 / k).measure(u).max_decimals(2));
                     if r.changed() {
                         if r.dragged() && !r.drag_started() {
                             app.session.join_next_undo();
                         }
-                        let _ = app.run("picture.size", json!({key: v, "lockAspect": false}));
+                        let _ = app.run("picture.size", json!({key: v * k, "lockAspect": false}));
                     }
                 });
             }
@@ -1932,17 +1949,19 @@ fn shape_format(app: &mut WordApp, ui: &mut Ui) {
     group(ui, "Size", None, app, |ui, app| {
         let (w0, h0) =
             wordcraft_engine::cmd::objects::selected(&app.session).and_then(|(_, o)| o.frame().map(|(w, h, _)| (w, h))).unwrap_or((0.0, 0.0));
+        let u = app.session.units();
+        let k = u.pt_per_unit();
         stack(ui, |ui| {
             crate::widgets::row(ui, |ui| {
                 for (label, key, v0) in [("W:", "width", w0), ("H:", "height", h0)] {
                     ui.label(egui::RichText::new(tl!(label)).small());
-                    let mut v = v0;
-                    let r = ui.add(egui::DragValue::new(&mut v).speed(1.0).range(4.0..=2000.0).suffix(" pt"));
+                    let mut v = v0 / k;
+                    let r = ui.add(egui::DragValue::new(&mut v).speed(3.6 / k).range(4.0 / k..=2000.0 / k).measure(u).max_decimals(2));
                     if r.changed() {
                         if r.dragged() && !r.drag_started() {
                             app.session.join_next_undo();
                         }
-                        let _ = app.run("picture.size", json!({key: v, "lockAspect": false}));
+                        let _ = app.run("picture.size", json!({key: v * k, "lockAspect": false}));
                     }
                 }
             });
@@ -2090,26 +2109,28 @@ fn picture_format(app: &mut WordApp, ui: &mut Ui) {
             Some((pos, wordcraft_doc::para::InlineObject::Image { media, w, h, alt, crop, .. })) => (media, pos.off, w, h, crop, alt),
             _ => (String::new(), 0, 0.0, 0.0, [0.0; 4], String::new()),
         };
+        let u = app.session.units();
+        let k = u.pt_per_unit();
         // `picture.size` locks the aspect ratio unless told otherwise, so one dimension suffices.
         stack(ui, |ui| {
             crate::widgets::row(ui, |ui| {
                 ui.label(egui::RichText::new(tl!("W:")).small());
-                let mut w = w0;
-                let r = ui.add(egui::DragValue::new(&mut w).speed(1.0).range(4.0..=2000.0).suffix(format!(" {}", tl!("pt"))));
+                let mut w = w0 / k;
+                let r = ui.add(egui::DragValue::new(&mut w).speed(3.6 / k).range(4.0 / k..=2000.0 / k).measure(u).max_decimals(2));
                 if r.changed() {
                     if r.dragged() && !r.drag_started() {
                         app.session.join_next_undo();
                     }
-                    let _ = app.run("picture.size", json!({"width": w}));
+                    let _ = app.run("picture.size", json!({"width": w * k}));
                 }
                 ui.label(egui::RichText::new(tl!("H:")).small());
-                let mut h = h0;
-                let r = ui.add(egui::DragValue::new(&mut h).speed(1.0).range(4.0..=2000.0).suffix(format!(" {}", tl!("pt"))));
+                let mut h = h0 / k;
+                let r = ui.add(egui::DragValue::new(&mut h).speed(3.6 / k).range(4.0 / k..=2000.0 / k).measure(u).max_decimals(2));
                 if r.changed() {
                     if r.dragged() && !r.drag_started() {
                         app.session.join_next_undo();
                     }
-                    let _ = app.run("picture.size", json!({"height": h}));
+                    let _ = app.run("picture.size", json!({"height": h * k}));
                 }
                 rotation_field(ui, app);
             });
@@ -2564,5 +2585,18 @@ mod tests {
         assert_eq!(resolve_tab("Picture Format", &["Home"]), "Home");
         assert_eq!(resolve_tab("Table Design", &["Home"]), "Home");
         assert_eq!(resolve_tab("Home", &["Home"]), "Home");
+    }
+
+    #[test]
+    fn object_size_converts_between_points_and_session_units() {
+        let mut app = WordApp::new(Session::new(wordcraft_engine::sample::sample_document()), crate::Services::default());
+        app.run("file.options", json!({"units": "centimeters"})).unwrap();
+        let u = app.session.units();
+        assert_eq!(u, wordcraft_geom::Unit::Centimeters);
+        let k = u.pt_per_unit();
+        let pt = 144.0;
+        let cm = pt / k;
+        assert!((cm - 144.0 / wordcraft_geom::PT_PER_CM).abs() < 1e-4);
+        assert!((cm * k - pt).abs() < 1e-4);
     }
 }

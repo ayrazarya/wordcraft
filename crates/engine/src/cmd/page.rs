@@ -12,7 +12,7 @@ use crate::{CmdError, CmdResult, CommandSpec, Selection, Session, p};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("layout.margins", "Margins", "Layout › Page Setup", margins).params(
-            r#"{"preset"?: "normal|narrow|moderate|wide|mirrored|office2003", "top"?: pt, "bottom"?: pt, "left"?: pt, "right"?: pt, "gutter"?: pt}"#,
+            r#"{"preset"?: "normal|narrow|moderate|wide|mirrored|office2003|skripsi|academic_id", "top"?: pt, "bottom"?: pt, "left"?: pt, "right"?: pt, "gutter"?: pt}"#,
         ),
         CommandSpec::new("layout.orientation", "Orientation", "Layout › Page Setup", |s, v| {
             let land = match p::str(v, "value") {
@@ -342,6 +342,10 @@ fn margins(s: &mut Session, v: &Value) -> CmdResult {
         Some("wide") => (72.0, 72.0, 144.0, 144.0),
         Some("mirrored") => (72.0, 72.0, 90.0, 72.0),
         Some("office2003") => (72.0, 72.0, 90.0, 90.0),
+        // Indonesian academic thesis standard: 4-4-3-3 (Top 4cm, Bottom 3cm, Left 4cm, Right 3cm)
+        Some("skripsi" | "academic_id") => {
+            (wordcraft_geom::cm_to_pt(4.0), wordcraft_geom::cm_to_pt(3.0), wordcraft_geom::cm_to_pt(4.0), wordcraft_geom::cm_to_pt(3.0))
+        }
         Some(x) => return Err(CmdError::Params(format!("unknown preset `{x}`"))),
         None => {
             let c = sect(s);
@@ -701,5 +705,17 @@ mod tests {
         assert!(found > 0, "no candidates");
         assert_eq!(s.doc.plain_text(wordcraft_doc::StoryRef::Body).matches('\u{ad}').count(), found);
         assert!(s.run("layout.manualHyphenation", &json!({"from": {"block": 999, "off": 0}})).unwrap()["done"] == true);
+    }
+
+    #[test]
+    fn test_margins_skripsi() {
+        let mut s = Session::new(wordcraft_doc::Document::new());
+        s.run("layout.margins", &json!({"preset": "skripsi"})).unwrap();
+        let sec = &s.doc.last_section;
+        // 4cm = ~113.386 pt, 3cm = ~85.039 pt
+        assert!((sec.margin_top - wordcraft_geom::cm_to_pt(4.0)).abs() < 0.1);
+        assert!((sec.margin_left - wordcraft_geom::cm_to_pt(4.0)).abs() < 0.1);
+        assert!((sec.margin_bottom - wordcraft_geom::cm_to_pt(3.0)).abs() < 0.1);
+        assert!((sec.margin_right - wordcraft_geom::cm_to_pt(3.0)).abs() < 0.1);
     }
 }

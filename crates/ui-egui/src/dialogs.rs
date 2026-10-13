@@ -1630,12 +1630,12 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     ui.label(egui::RichText::new(tl!("Spacing")).font(semibold(12.5)));
                     egui::Grid::new("sp").num_columns(4).show(ui, |ui| {
                         ui.label(tl!("Before:"));
-                        ui.add(egui::DragValue::new(before).speed(1.0).range(0.0..=1584.0).suffix(format!(" {}", tl!("pt"))));
+                        ui.add(egui::DragValue::new(before).speed(1.0).range(0.0..=1584.0).measure(wordcraft_geom::Unit::Points).max_decimals(2));
                         ui.label(tl!("Line spacing:"));
                         ui.add(egui::DragValue::new(line).speed(0.05).range(0.5..=5.0));
                         ui.end_row();
                         ui.label(tl!("After:"));
-                        ui.add(egui::DragValue::new(after).speed(1.0).range(0.0..=1584.0).suffix(format!(" {}", tl!("pt"))));
+                        ui.add(egui::DragValue::new(after).speed(1.0).range(0.0..=1584.0).measure(wordcraft_geom::Unit::Points).max_decimals(2));
                         ui.end_row();
                     });
                     ui.checkbox(&mut opts[1], tl!("Don't add space between paragraphs of the same style"));
@@ -2111,8 +2111,8 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ui.end_row();
                 ui.label(tl!("Space before/after:"));
                 ui.horizontal(|ui| {
-                    ui.add(egui::DragValue::new(before).range(0.0..=1584.0));
-                    ui.add(egui::DragValue::new(after).range(0.0..=1584.0));
+                    ui.add(egui::DragValue::new(before).speed(1.0).range(0.0..=1584.0).measure(wordcraft_geom::Unit::Points).max_decimals(2));
+                    ui.add(egui::DragValue::new(after).speed(1.0).range(0.0..=1584.0).measure(wordcraft_geom::Unit::Points).max_decimals(2));
                 });
                 ui.end_row();
             });
@@ -3696,5 +3696,17 @@ mod tests {
         let after = h.ctx.memory(|m| m.area_rect(id)).expect("dialog is still open");
         assert!((after.min.x - (before.min.x - 200.0)).abs() <= 1.0, "moved left: {before:?} -> {after:?}");
         assert!((after.min.y - (before.min.y + 120.0)).abs() <= 1.0, "moved down: {before:?} -> {after:?}");
+    }
+
+    /// Paragraph spacing fields accept values with units (cm, in, li, pt) and decimal commas (#485).
+    #[test]
+    fn paragraph_spacing_measures_and_parses_units() {
+        let u = wordcraft_geom::Unit::Points;
+        assert_eq!(wordcraft_geom::parse_measure("12", u), Some(12.0));
+        assert_eq!(wordcraft_geom::parse_measure("12 pt", u), Some(12.0));
+        assert_eq!(wordcraft_geom::parse_measure("1 in", u), Some(72.0));
+        assert_eq!(wordcraft_geom::parse_measure("0.5 cm", u), Some(0.5 * wordcraft_geom::PT_PER_CM));
+        assert_eq!(wordcraft_geom::parse_measure("0,5 cm", u), Some(0.5 * wordcraft_geom::PT_PER_CM));
+        assert_eq!(wordcraft_geom::parse_measure("1.5 li", u), Some(18.0));
     }
 }

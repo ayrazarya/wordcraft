@@ -203,6 +203,113 @@ pub fn report() -> Document {
     d
 }
 
+/// Indonesian academic thesis (Skripsi / Tugas Akhir) with standard 4-4-3-3 cm margins.
+pub fn skripsi() -> Document {
+    let mut d = Document::new();
+    d.core.title = "Draf Skripsi".into();
+    d.core.creator = "WordCraft".into();
+    // Standard Indonesian academic margins: 4cm Left, 4cm Top, 3cm Right, 3cm Bottom on A4
+    d.last_section.page_w = 595.3;
+    d.last_section.page_h = 841.9;
+    d.last_section.margin_top = wordcraft_geom::cm_to_pt(4.0);
+    d.last_section.margin_left = wordcraft_geom::cm_to_pt(4.0);
+    d.last_section.margin_bottom = wordcraft_geom::cm_to_pt(3.0);
+    d.last_section.margin_right = wordcraft_geom::cm_to_pt(3.0);
+
+    let b: Vec<Block> = vec![
+        Block::Para(styled("JUDUL PENELITIAN SKRIPSI ATAU TUGAS AKHIR", "Title")),
+        Block::Para(styled("Diajukan Untuk Memenuhi Sebagian Persyaratan Mencapai Derajat Sarjana", "Subtitle")),
+        Block::Para(para("Nama Mahasiswa (NIM: 1234567890)")),
+        Block::Para(para("Program Studi Teknik Informatika · Fakultas Ilmu Komputer · Universitas 2026")),
+        Block::Para(styled("ABSTRAK", "Heading1")),
+        Block::Para(para(
+            "Penelitian ini bertujuan untuk menganalisis dan merancang solusi berbasis teknologi modern. Metode yang digunakan adalah kualitatif dan eksperimental. Hasil penelitian menunjukkan peningkatan efisiensi yang signifikan.",
+        )),
+        Block::Para(styled("KATA PENGANTAR", "Heading1")),
+        Block::Para(para(
+            "Puji dan syukur penulis panjatkan ke hadirat Tuhan Yang Maha Esa atas rahmat dan karunia-Nya sehingga skripsi ini dapat diselesaikan dengan baik.",
+        )),
+        Block::Para(styled("BAB I PENDAHULUAN", "Heading1")),
+        Block::Para(styled("1.1 Latar Belakang Masalah", "Heading2")),
+        Block::Para(para(
+            "Perkembangan ilmu pengetahuan dan teknologi saat ini menuntut adanya inovasi yang berkelanjutan. Dalam bidang pengolahan dokumen, kecepatan dan keandalan menjadi faktor kunci.",
+        )),
+        Block::Para(styled("1.2 Rumusan Masalah", "Heading2")),
+        Block::Para(para(
+            "Berdasarkan latar belakang tersebut, rumusan masalah dalam penelitian ini adalah bagaimana membangun sistem pengolah kata yang cepat, aman, dan efisien.",
+        )),
+        Block::Para(styled("1.3 Tujuan Penelitian", "Heading2")),
+        Block::Para(para("Tujuan dari penelitian ini adalah menghasilkan perangkat lunak yang andal untuk kebutuhan akademis dan profesional.")),
+        Block::Para(styled("1.4 Manfaat Penelitian", "Heading2")),
+        Block::Para(para(
+            "Manfaat penelitian ini mencakup kontribusi teoritis bagi literatur akademik serta manfaat praktis bagi masyarakat pengguna.",
+        )),
+        Block::Para(styled("BAB II TINJAUAN PUSTAKA", "Heading1")),
+        Block::Para(styled("2.1 Landasan Teori", "Heading2")),
+        Block::Para(para("Bagian ini memaparkan teori-teori dasar dan kerangka pemikiran yang relevan dengan topik yang diteliti.")),
+        Block::Para(styled("BAB III METODOLOGI PENELITIAN", "Heading1")),
+        Block::Para(styled("3.1 Metode Penelitian", "Heading2")),
+        Block::Para(para("Penelitian ini menggunakan pendekatan clean-room engineering dengan pengujian komprehensif.")),
+        Block::Para(styled("DAFTAR PUSTAKA", "Heading1")),
+        Block::Para(para("Santoso, B. (2025). Rekayasa Perangkat Lunak Modern. Jakarta: Penerbit Informatika.")),
+    ];
+    d.body = b.into_iter().map(std::sync::Arc::new).collect();
+    d
+}
+
+/// Indonesian official letter (Surat Resmi / Dinas) template with letterhead and standard structure.
+pub fn surat_resmi() -> Document {
+    let mut d = Document::new();
+    d.core.title = "Surat Resmi".into();
+    d.last_section.page_w = 595.3;
+    d.last_section.page_h = 841.9;
+    d.last_section.margin_top = wordcraft_geom::cm_to_pt(2.5);
+    d.last_section.margin_left = wordcraft_geom::cm_to_pt(3.0);
+    d.last_section.margin_bottom = wordcraft_geom::cm_to_pt(2.5);
+    d.last_section.margin_right = wordcraft_geom::cm_to_pt(2.5);
+
+    let mut kop = styled("PEMERINTAH KOTA / INSTANSI RESMI", "Title");
+    kop.props.align = Some(Align::Center);
+    let mut sub_kop = para("Jl. Jenderal Sudirman No. 123 · Telp. (021) 1234567 · surel: info@instansi.go.id");
+    sub_kop.props.align = Some(Align::Center);
+    sub_kop.props.borders = Some(Borders {
+        bottom: Some(Border { style: BorderStyle::Single, width: 1.5, color: Some(Rgb(0x22, 0x22, 0x22)), space: 6.0 }),
+        ..Default::default()
+    });
+
+    let b: Vec<Block> = vec![
+        Block::Para(kop),
+        Block::Para(sub_kop),
+        Block::Para(para("")),
+        Block::Para(para("Nomor       : 001/UND/X/2026\t\t\tJakarta, 13 Oktober 2026")),
+        Block::Para(para("Lampiran  : -")),
+        Block::Para(para("Perihal     : Undangan Rapat Koordinasi")),
+        Block::Para(para("")),
+        Block::Para(para("Kepada Yth.")),
+        Block::Para(para("Bapak/Ibu Pimpinan Unit Kerja")),
+        Block::Para(para("di Tempat")),
+        Block::Para(para("")),
+        Block::Para(para("Dengan hormat,")),
+        Block::Para(para(
+            "Sehubungan dengan pelaksanaan program kerja tahun 2026, kami mengundang Bapak/Ibu untuk menghadiri rapat koordinasi yang akan dilaksanakan pada:",
+        )),
+        Block::Para(para("    Hari/Tanggal : Senin, 20 Oktober 2026")),
+        Block::Para(para("    Waktu        : 09.00 WIB s.d. selesai")),
+        Block::Para(para("    Tempat       : Ruang Rapat Utama Lantai 2")),
+        Block::Para(para("Mengingat pentingnya agenda tersebut, kami mengharapkan kehadiran tepat pada waktunya.")),
+        Block::Para(para("Demikian surat undangan ini kami sampaikan. Atas perhatian dan kerja sama Bapak/Ibu, kami ucapkan terima kasih.")),
+        Block::Para(para("")),
+        Block::Para(para("Hormat kami,")),
+        Block::Para(para("Kepala Instansi / Pimpinan,")),
+        Block::Para(para("")),
+        Block::Para(para("")),
+        Block::Para(styled("(Nama Pejabat / Pimpinan)", "Subtitle")),
+        Block::Para(para("NIP. 19850101 201001 1 001")),
+    ];
+    d.body = b.into_iter().map(std::sync::Arc::new).collect();
+    d
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,7 +317,7 @@ mod tests {
     #[test]
     fn samples_are_valid() {
         assert_eq!(sample_document().word_count(), 361);
-        for d in [sample_document(), letter(), resume(), report()] {
+        for d in [sample_document(), letter(), resume(), report(), skripsi(), surat_resmi()] {
             assert!(d.word_count() > 5);
             let l = wordcraft_layout::layout(&d, &mut wordcraft_layout::LayoutCache::new(), &Default::default());
             assert!(!l.pages.is_empty());

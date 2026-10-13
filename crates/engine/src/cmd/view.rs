@@ -51,6 +51,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(r#"{"value"?: bool}"#)
             .pure(),
         CommandSpec::new("view.navigationPane", "Navigation Pane", "View › Show", |s, v| toggle(s, v, |x| &mut x.nav_pane)).pure(),
+        CommandSpec::new("view.aiPane", "AI Assistant", "View › Show", |s, v| toggle(s, v, |x| &mut x.ai_pane)).params(r#"{"value"?: bool}"#).pure(),
         CommandSpec::new("view.zoom", "Zoom", "View › Zoom", zoom)
             .params(r#"{"value": percent (10-500) | "pageWidth" | "onePage" | "multiplePages"}"#)
             .pure(),
@@ -84,11 +85,39 @@ pub fn specs() -> Vec<CommandSpec> {
             sel_result(s)
         })
         .pure(),
-        CommandSpec::new("view.split", "Split", "View › Window", |s, _| {
+        CommandSpec::new("view.split", "Split", "View › Window", |s, v| {
+            let r = toggle(s, v, |x| &mut x.split_view);
             s.ui_requests.push(json!({"toggle": "split"}));
+            r
+        })
+        .params(r#"{"value"?: bool}"#)
+        .key("Mod+Alt+S")
+        .pure(),
+        CommandSpec::new("view.sideBySide", "View Side by Side", "View › Window", |s, v| {
+            let r = toggle(s, v, |x| &mut x.side_by_side);
+            s.ui_requests.push(json!({"view": "sideBySide", "value": s.view.side_by_side}));
+            r
+        })
+        .params(r#"{"value"?: bool}"#)
+        .pure(),
+        CommandSpec::new("view.syncScroll", "Synchronous Scrolling", "View › Window", |s, v| {
+            let r = toggle(s, v, |x| &mut x.sync_scroll);
+            s.ui_requests.push(json!({"scroll": "sync", "value": s.view.sync_scroll}));
+            r
+        })
+        .params(r#"{"value"?: bool}"#)
+        .pure(),
+        CommandSpec::new("view.arrangeAll", "Arrange All", "View › Window", |s, _| {
+            s.ui_requests.push(json!({"arrange": "all"}));
             sel_result(s)
         })
-        .key("Mod+Alt+S")
+        .pure(),
+        CommandSpec::new("view.switchWindows", "Switch Windows", "View › Window", |s, v| {
+            let win = p::str(v, "window");
+            s.ui_requests.push(json!({"switchWindow": win}));
+            sel_result(s)
+        })
+        .params(r#"{"window"?: string}"#)
         .pure(),
         CommandSpec::new("view.state", "View State", "View", |s, _| serde_json::to_value(&s.view).map_err(|e| CmdError::Failed(e.to_string())))
             .pure(),
@@ -180,4 +209,34 @@ fn zoom(s: &mut Session, v: &Value) -> CmdResult {
         }
     }
     Ok(json!({"zoom": s.view.zoom, "fit": s.view.fit}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_side_by_side_and_sync_scroll() {
+        let mut s = Session::new(wordcraft_doc::Document::new());
+        assert!(!s.view.side_by_side);
+        assert!(!s.view.sync_scroll);
+
+        let r = s.run("view.sideBySide", &json!({})).unwrap();
+        assert_eq!(r["value"], true);
+        assert!(s.view.side_by_side);
+
+        let r = s.run("view.syncScroll", &json!({"value": true})).unwrap();
+        assert_eq!(r["value"], true);
+        assert!(s.view.sync_scroll);
+
+        let r = s.run("view.sideBySide", &json!({"value": false})).unwrap();
+        assert_eq!(r["value"], false);
+        assert!(!s.view.side_by_side);
+
+        s.run("view.arrangeAll", &json!({})).unwrap();
+        assert_eq!(s.ui_requests.last().unwrap()["arrange"], "all");
+
+        s.run("view.switchWindows", &json!({"window": "doc2.docx"})).unwrap();
+        assert_eq!(s.ui_requests.last().unwrap()["switchWindow"], "doc2.docx");
+    }
 }

@@ -2087,3 +2087,15 @@
 	Start-up	Запуск
 	Show the Start screen when WordCraft starts	Показувати початковий екран під час запуску WordCraft
 	On: WordCraft opens on File › Home, with a blank document, the templates and your recent documents. Off: it opens a blank document.	Увімкнено: WordCraft відкривається на сторінці Файл › Основне з порожнім документом, шаблонами та нещодавніми документами. Вимкнено: відкривається порожній документ.
+	AI Assistant	ШІ-помічник
+	AI Fix Grammar	Виправлення граматики за допомогою ШІ
+	AI Generate Draft	Створити чернетку за допомогою ШІ
+	AI Get Document Context	Отримати контекст документа з ШІ
+	AI Insert Formatted Text	Вставити відформатований текст ШІ
+	AI Rewrite	Переписати за допомогою ШІ
+	AI Sentence Suggestions	Варіанти речень від ШІ
+	AI Summarize	Узагальнити за допомогою ШІ
+	Arrange All	Упорядкувати все
+	Switch Windows	Переключити вікна
+	Synchronous Scrolling	Синхронне прокручування
+	View Side by Side	Переглядати поруч

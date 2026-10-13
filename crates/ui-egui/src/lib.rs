@@ -22,6 +22,7 @@ macro_rules! tl {
 
 pub mod a11y;
 pub mod a11y_pane;
+pub mod ai_chat;
 pub mod backstage;
 pub mod canvas;
 pub mod caret_glide;
@@ -253,6 +254,9 @@ pub struct UiState {
     pub update_fields_before_print: bool,
     /// The custom dictionary (File › Options › Proofing, Add to Dictionary), kept between runs.
     pub dictionary: Vec<String>,
+    /// AI Assistant configuration (credentials, endpoint, model).
+    #[serde(default)]
+    pub ai_config: ai_chat::AiConfig,
 }
 
 /// Most recent documents kept (File › Options › Advanced offers 0–50, as Word does).
@@ -302,6 +306,7 @@ impl Default for UiState {
             print_backgrounds: false,
             update_fields_before_print: false,
             dictionary: Vec::new(),
+            ai_config: ai_chat::AiConfig::default(),
         }
     }
 }
@@ -417,6 +422,8 @@ pub struct WordApp {
     pub(crate) outline_prev_tab: Option<String>,
     /// Zotero commands in flight (`ui.zotero.*`).
     pub zotero: zotero::ZoteroLink,
+    /// AI Assistant chatbot state.
+    pub ai_chat: ai_chat::AiChatState,
     /// The egui context, once the first frame has run (background work wakes the UI with it).
     pub(crate) ctx: Option<egui::Context>,
     /// Read Aloud: the start of the sentence the caret was last moved to, and the last error shown.
@@ -506,6 +513,7 @@ impl WordApp {
             smart_art_typing: None,
             outline_prev_tab: None,
             zotero: zotero::ZoteroLink::default(),
+            ai_chat: ai_chat::AiChatState::default(),
             ctx: None,
             read_aloud_at: None,
             read_aloud_error: None,
@@ -1364,6 +1372,7 @@ impl WordApp {
         self.drain_control(ctx);
         zotero::poll(self, ctx);
         read_aloud::poll(self, ctx);
+        self.ai_chat.poll(ctx);
         self.clear_stale_change_picture();
         let _ = self.poll_file_dialog();
         self.drain_inbox();

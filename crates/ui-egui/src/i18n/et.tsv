@@ -2109,3 +2109,15 @@
 	Start-up	Käivitamine
 	Show the Start screen when WordCraft starts	Näita WordCrafti käivitamisel avakuva
 	On: WordCraft opens on File › Home, with a blank document, the templates and your recent documents. Off: it opens a blank document.	Sees: WordCraft avaneb vaates Fail › Avaleht, kus on tühi dokument, mallid ja hiljutised dokumendid. Väljas: avaneb tühi dokument.
+	AI Assistant	Tehisintellekti abiline
+	AI Fix Grammar	Tehisintellekti grammatikaparandus
+	AI Generate Draft	Tehisintellekti mustandi loomine
+	AI Get Document Context	Hangi tehisintellekti dokumendi kontekst
+	AI Insert Formatted Text	Sisesta vormindatud tehisintellekti tekst
+	AI Rewrite	Tehisintellekti ümbersõnastus
+	AI Sentence Suggestions	Tehisintellekti lausesoovitused
+	AI Summarize	Tehisintellekti kokkuvõte
+	Arrange All	Järjesta kõik
+	Switch Windows	Vaheta aknaid
+	Synchronous Scrolling	Sünkroonne kerimine
+	View Side by Side	Vaata kõrvuti

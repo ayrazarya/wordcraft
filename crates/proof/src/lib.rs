@@ -31,6 +31,7 @@ pub mod bg;
 pub mod dict;
 pub mod hunspell;
 pub mod hyphen;
+pub mod id;
 pub mod lang;
 pub mod patterns;
 pub mod pl;
@@ -499,6 +500,7 @@ fn spelling_issue(text: &str, a: usize, b: usize, lang: ProofLang, opts: &Option
     let message = match lang {
         ProofLang::Pl => "Możliwy błąd pisowni",
         ProofLang::Pt => "Possível erro de ortografia",
+        ProofLang::Id => "Kemungkinan kesalahan ejaan",
         _ => "Possible spelling mistake",
     };
     Some(Issue { start: a, end: b, kind: IssueKind::Spelling, message: message.into(), suggestions: Vec::new(), lang })
@@ -515,6 +517,7 @@ pub fn is_correct_in_with(word: &str, lang: ProofLang, opts: &Options) -> bool {
         ProofLang::En => is_correct_with(word, opts),
         ProofLang::Pl => accepted_by_options(word, opts) || pl::is_correct(word),
         ProofLang::Pt => accepted_by_options(word, opts) || pt::is_correct(word),
+        ProofLang::Id => accepted_by_options(word, opts) || id::is_correct(word),
         ProofLang::Bg | ProofLang::Other => true,
     }
 }
@@ -525,18 +528,20 @@ pub fn suggest_in(word: &str, max: usize, lang: ProofLang) -> Vec<String> {
         ProofLang::En => suggest(word, max),
         ProofLang::Pl => pl::suggest(word, max),
         ProofLang::Pt => pt::suggest(word, max),
+        ProofLang::Id => id::suggest(word, max),
         ProofLang::Bg | ProofLang::Other => Vec::new(),
     }
 }
 
 /// Grammar issues in a paragraph of text in `lang`: the English rules, the Polish ones
-/// ([`pl::grammar`]), the Portuguese ones ([`pt::grammar`]), or none for a language WordCraft
-/// doesn't proof.
+/// ([`pl::grammar`]), the Portuguese ones ([`pt::grammar`]), the Indonesian ones
+/// ([`id::grammar`]), or none for a language WordCraft doesn't proof.
 pub fn check_grammar_in(text: &str, lang: ProofLang) -> Vec<Issue> {
     match lang {
         ProofLang::En => check_grammar(text),
         ProofLang::Pl => pl::grammar::check(text),
         ProofLang::Pt => pt::grammar::check(text),
+        ProofLang::Id => id::grammar::check(text),
         ProofLang::Bg | ProofLang::Other => Vec::new(),
     }
 }
@@ -1025,7 +1030,7 @@ mod tests {
             let _ = has_dictionary(Some(&s));
             let _ = is_correct_for(&s, Some(&s));
             let _ = hyphen::hyphen_points(&s, &hyphen::Limits::default());
-            for lang in [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::Other] {
+            for lang in [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::Id, ProofLang::Other] {
                 let _ = check_spelling_in(&s, lang);
                 let _ = check_grammar_in(&s, lang);
                 let _ = is_correct_in(&s, lang);
@@ -1046,9 +1051,14 @@ mod tests {
         }
 
         #[test]
-        fn mixed_spans_never_panic(s in "\\PC{0,60}", cuts in proptest::collection::vec((0usize..80, 0usize..80, 0u8..4), 0..6)) {
-            let langs = [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::Other];
-            let spans: Vec<(Range<usize>, ProofLang)> = cuts.iter().map(|&(a, b, l)| (a.min(b)..a.max(b), langs[l as usize % 4])).collect();
+        fn indonesian_suggestions_never_panic(s in "[a-zA-Z'’ -]{0,14}") {
+            let _ = suggest_in(&s, 4, ProofLang::Id);
+        }
+
+        #[test]
+        fn mixed_spans_never_panic(s in "\\PC{0,60}", cuts in proptest::collection::vec((0usize..80, 0usize..80, 0u8..5), 0..6)) {
+            let langs = [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::Id, ProofLang::Other];
+            let spans: Vec<(Range<usize>, ProofLang)> = cuts.iter().map(|&(a, b, l)| (a.min(b)..a.max(b), langs[l as usize % 5])).collect();
             for i in check_text(&s, &spans) {
                 proptest::prop_assert!(i.start <= i.end && i.end <= s.len());
             }

@@ -87,6 +87,19 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             .frame(egui::Frame::NONE.fill(t.panel).inner_margin(10).stroke(Stroke::new(1.0, t.border)))
             .show(ui, |ui| comments(app, ui));
     }
+    if app.session.view.ai_pane {
+        egui::Panel::right("ai_pane")
+            .default_size(340.0)
+            .resizable(true)
+            .frame(egui::Frame::NONE.fill(t.panel).inner_margin(10).stroke(Stroke::new(1.0, t.border)))
+            .show(ui, |ui| {
+                if header(ui, "AI Assistant") {
+                    let _ = app.run("view.aiPane", json!({"value": false}));
+                    return;
+                }
+                crate::ai_chat::show(app, ui);
+            });
+    }
 }
 
 pub(crate) fn header(ui: &mut Ui, title: &str) -> bool {

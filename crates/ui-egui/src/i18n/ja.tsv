@@ -2075,3 +2075,15 @@
 	Start-up	起動
 	Show the Start screen when WordCraft starts	WordCraft の起動時にスタート画面を表示する
 	On: WordCraft opens on File › Home, with a blank document, the templates and your recent documents. Off: it opens a blank document.	オン: WordCraft は [ファイル] › [ホーム] で開き、白紙の文書、テンプレート、最近使った文書を表示します。オフ: 白紙の文書を開きます。
+	AI Assistant	AI アシスタント
+	AI Fix Grammar	AI 文法修正
+	AI Generate Draft	AI 下書きの生成
+	AI Get Document Context	AI ドキュメントコンテキストの取得
+	AI Insert Formatted Text	書式設定された AI テキストの挿入
+	AI Rewrite	AI リライト
+	AI Sentence Suggestions	AI 文章候補
+	AI Summarize	AI 要約
+	Arrange All	すべて並べて表示
+	Switch Windows	ウィンドウの切り替え
+	Synchronous Scrolling	同期スクロール
+	View Side by Side	並べて比較

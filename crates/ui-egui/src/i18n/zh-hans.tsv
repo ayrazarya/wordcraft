@@ -2087,3 +2087,15 @@
 	Start-up	启动
 	Show the Start screen when WordCraft starts	启动 WordCraft 时显示开始屏幕
 	On: WordCraft opens on File › Home, with a blank document, the templates and your recent documents. Off: it opens a blank document.	开：WordCraft 打开时显示“文件 › 开始”，其中有空白文档、模板和最近使用的文档。关：直接打开空白文档。
+	AI Assistant	AI 助手
+	AI Fix Grammar	AI 语法修正
+	AI Generate Draft	AI 生成草稿
+	AI Get Document Context	获取 AI 文档上下文
+	AI Insert Formatted Text	插入格式化 AI 文本
+	AI Rewrite	AI 重写
+	AI Sentence Suggestions	AI 句子建议
+	AI Summarize	AI 总结
+	Arrange All	全部重排
+	Switch Windows	切换窗口
+	Synchronous Scrolling	并排滚动
+	View Side by Side	并排查看

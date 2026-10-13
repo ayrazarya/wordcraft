@@ -19,6 +19,14 @@ pub const TWIPS_PER_PT: f32 = 20.0;
 pub const EMU_PER_PT: f32 = 12_700.0;
 /// Points per centimetre.
 pub const PT_PER_CM: f32 = 72.0 / 2.54;
+/// Centimetres per inch (exact).
+pub const CM_PER_IN: f32 = 2.54;
+/// Inches per centimetre.
+pub const IN_PER_CM: f32 = 1.0 / 2.54;
+/// Millimetres per inch.
+pub const MM_PER_IN: f32 = 25.4;
+/// Points per millimetre.
+pub const PT_PER_MM: f32 = 72.0 / 25.4;
 
 /// Twips → points.
 pub fn twips(v: i64) -> f32 {
@@ -45,6 +53,23 @@ pub fn to_half_points(pt: f32) -> i64 {
     (finite(pt) * 2.0).round() as i64
 }
 
+/// Inches → centimetres.
+pub fn in_to_cm(inches: f32) -> f32 {
+    finite(inches) * CM_PER_IN
+}
+/// Centimetres → inches.
+pub fn cm_to_in(cm: f32) -> f32 {
+    finite(cm) * IN_PER_CM
+}
+/// Centimetres → points.
+pub fn cm_to_pt(cm: f32) -> f32 {
+    finite(cm) * PT_PER_CM
+}
+/// Points → centimetres.
+pub fn pt_to_cm(pt: f32) -> f32 {
+    finite(pt) / PT_PER_CM
+}
+
 /// Replace NaN/inf with 0 so casts and arithmetic stay defined.
 pub fn finite(v: f32) -> f32 {
     if v.is_finite() { v } else { 0.0 }
@@ -62,7 +87,35 @@ pub enum Unit {
     Picas,
 }
 
+/// All measurement units, in the order Word's Options dialog shows them.
+pub const ALL_UNITS: [Unit; 5] = [Unit::Inches, Unit::Centimeters, Unit::Millimeters, Unit::Points, Unit::Picas];
+
 impl Unit {
+    /// All units in display order.
+    pub const fn all() -> [Unit; 5] {
+        ALL_UNITS
+    }
+    /// Human-readable label (`"Inches"`, `"Centimeters"`, …).
+    pub fn label(self) -> &'static str {
+        match self {
+            Unit::Inches => "Inches",
+            Unit::Centimeters => "Centimeters",
+            Unit::Millimeters => "Millimeters",
+            Unit::Points => "Points",
+            Unit::Picas => "Picas",
+        }
+    }
+    /// Parse a unit name (`"inches"`, `"cm"`, `"pt"`, …). Case-insensitive.
+    pub fn parse(s: &str) -> Option<Unit> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "inches" | "inch" | "in" | "\"" => Some(Unit::Inches),
+            "centimeters" | "centimetres" | "cm" => Some(Unit::Centimeters),
+            "millimeters" | "millimetres" | "mm" => Some(Unit::Millimeters),
+            "points" | "point" | "pt" | "pts" => Some(Unit::Points),
+            "picas" | "pica" | "pi" | "pc" => Some(Unit::Picas),
+            _ => None,
+        }
+    }
     pub fn suffix(self) -> &'static str {
         match self {
             Unit::Inches => "\"",
@@ -80,6 +133,28 @@ impl Unit {
             Unit::Points => 1.0,
             Unit::Picas => 12.0,
         }
+    }
+    /// Points → value in this unit.
+    pub fn from_pt(self, pt: f32) -> f32 {
+        finite(pt) / self.pt_per_unit()
+    }
+    /// Value in this unit → points.
+    pub fn to_pt(self, value: f32) -> f32 {
+        finite(value) * self.pt_per_unit()
+    }
+    /// Convert a value from `self` to `target` unit.
+    ///
+    /// ```
+    /// # use wordcraft_geom::Unit;
+    /// let cm = Unit::Inches.convert(1.0, Unit::Centimeters);
+    /// assert!((cm - 2.54).abs() < 0.01);
+    /// ```
+    pub fn convert(self, value: f32, target: Unit) -> f32 {
+        if self == target {
+            return finite(value);
+        }
+        let pt = finite(value) * self.pt_per_unit();
+        pt / target.pt_per_unit()
     }
     /// Format `pt` in this unit the way Word's fields show it (`1"`, `2.54 cm`, `12 pt`).
     pub fn format(self, pt: f32) -> String {
@@ -127,6 +202,21 @@ pub fn parse_measure(s: &str, default: Unit) -> Option<f32> {
     Some(v * k)
 }
 
+/// Snap `pt` to the nearest multiple of `grid_pt` (both in points). Useful for ruler snapping
+/// and grid alignment. Returns `pt` unchanged if `grid_pt` is zero, negative or non-finite.
+pub fn snap_to_grid(pt: f32, grid_pt: f32) -> f32 {
+    if !grid_pt.is_finite() || grid_pt <= 0.0 {
+        return finite(pt);
+    }
+    (finite(pt) / grid_pt).round() * grid_pt
+}
+
+/// Clamp a margin (in points) so it stays within `0..=max_pt`. Word silently clamps margins that
+/// would make the text area zero or negative.
+pub fn clamp_margin(pt: f32, max_pt: f32) -> f32 {
+    finite(pt).clamp(0.0, finite(max_pt).max(0.0))
+}
+
 /// A point in page space (points, y down).
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct Point {
@@ -153,6 +243,10 @@ impl Rect {
     pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
         Rect { x: finite(x), y: finite(y), w: finite(w).max(0.0), h: finite(h).max(0.0) }
     }
+    /// The centre of this rectangle.
+    pub fn center(&self) -> Point {
+        Point::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
     pub fn right(&self) -> f32 {
         self.x + self.w
     }
@@ -164,6 +258,14 @@ impl Rect {
     }
     pub fn intersects(&self, o: &Rect) -> bool {
         self.x < o.right() && o.x < self.right() && self.y < o.bottom() && o.y < self.bottom()
+    }
+    /// The overlapping area of two rectangles, or `None` if they don't overlap.
+    pub fn intersection(&self, o: &Rect) -> Option<Rect> {
+        let x = self.x.max(o.x);
+        let y = self.y.max(o.y);
+        let r = self.right().min(o.right());
+        let b = self.bottom().min(o.bottom());
+        if r > x && b > y { Some(Rect::new(x, y, r - x, b - y)) } else { None }
     }
     pub fn union(&self, o: &Rect) -> Rect {
         let x = self.x.min(o.x);
@@ -290,6 +392,18 @@ pub fn paper_name(w: f32, h: f32) -> Option<&'static str> {
         .map(|(n, _, _)| *n)
 }
 
+/// Get a paper size's dimensions in any unit (portrait). Returns `None` if the name is unknown.
+///
+/// ```
+/// # use wordcraft_geom::{paper_size_in, Unit};
+/// let (w, h) = paper_size_in("A4", Unit::Millimeters).unwrap();
+/// assert!((w - 210.0).abs() < 0.5);
+/// assert!((h - 297.0).abs() < 0.5);
+/// ```
+pub fn paper_size_in(name: &str, unit: Unit) -> Option<(f32, f32)> {
+    PAPER_SIZES.iter().find(|(n, _, _)| n.eq_ignore_ascii_case(name)).map(|(_, w, h)| (unit.from_pt(*w), unit.from_pt(*h)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +417,67 @@ mod tests {
         assert_eq!(half_points(24), 12.0);
         assert_eq!(to_half_points(10.5), 21);
         assert_eq!(to_twips(f32::NAN), 0);
+    }
+
+    #[test]
+    fn inch_cm_conversions() {
+        // 1 inch = 2.54 cm
+        assert!((in_to_cm(1.0) - 2.54).abs() < 0.001);
+        assert!((cm_to_in(2.54) - 1.0).abs() < 0.001);
+        // round-trip
+        assert!((cm_to_in(in_to_cm(3.5)) - 3.5).abs() < 0.001);
+        // NaN/inf → 0
+        assert_eq!(in_to_cm(f32::NAN), 0.0);
+        assert_eq!(cm_to_in(f32::INFINITY), 0.0);
+    }
+
+    #[test]
+    fn unit_convert() {
+        // inches → cm
+        let cm = Unit::Inches.convert(1.0, Unit::Centimeters);
+        assert!((cm - 2.54).abs() < 0.01);
+        // cm → inches
+        let inches = Unit::Centimeters.convert(2.54, Unit::Inches);
+        assert!((inches - 1.0).abs() < 0.01);
+        // same unit is identity
+        assert_eq!(Unit::Points.convert(42.0, Unit::Points), 42.0);
+        // inches → points
+        assert!((Unit::Inches.convert(1.0, Unit::Points) - 72.0).abs() < 0.01);
+        // mm → cm
+        assert!((Unit::Millimeters.convert(10.0, Unit::Centimeters) - 1.0).abs() < 0.01);
+        // NaN stays safe
+        assert_eq!(Unit::Inches.convert(f32::NAN, Unit::Centimeters), 0.0);
+    }
+
+    #[test]
+    fn unit_all_and_labels() {
+        let all = Unit::all();
+        assert_eq!(all.len(), 5);
+        assert_eq!(all[0], Unit::Inches);
+        assert_eq!(Unit::Centimeters.label(), "Centimeters");
+        assert_eq!(Unit::Points.label(), "Points");
+    }
+
+    #[test]
+    fn unit_parse_names() {
+        assert_eq!(Unit::parse("inches"), Some(Unit::Inches));
+        assert_eq!(Unit::parse("CM"), Some(Unit::Centimeters));
+        assert_eq!(Unit::parse("pt"), Some(Unit::Points));
+        assert_eq!(Unit::parse("pica"), Some(Unit::Picas));
+        assert_eq!(Unit::parse("mm"), Some(Unit::Millimeters));
+        assert_eq!(Unit::parse("furlongs"), None);
+        assert_eq!(Unit::parse(""), None);
+    }
+
+    #[test]
+    fn unit_from_pt_to_pt() {
+        // 72 pt = 1 inch
+        assert!((Unit::Inches.from_pt(72.0) - 1.0).abs() < 0.001);
+        assert!((Unit::Inches.to_pt(1.0) - 72.0).abs() < 0.001);
+        // round-trip
+        assert!((Unit::Centimeters.to_pt(Unit::Centimeters.from_pt(100.0)) - 100.0).abs() < 0.01);
+        // NaN safe
+        assert_eq!(Unit::Inches.from_pt(f32::NAN), 0.0);
     }
 
     #[test]
@@ -339,6 +514,31 @@ mod tests {
     }
 
     #[test]
+    fn snap_to_grid_works() {
+        // Snap to 0.25 inch grid (18 pt)
+        assert!((snap_to_grid(20.0, 18.0) - 18.0).abs() < 0.01);
+        assert!((snap_to_grid(27.0, 18.0) - 36.0).abs() < 0.01);
+        // Exact values are unchanged
+        assert_eq!(snap_to_grid(36.0, 18.0), 36.0);
+        // Zero/negative grid returns the value unchanged
+        assert_eq!(snap_to_grid(20.0, 0.0), 20.0);
+        assert_eq!(snap_to_grid(20.0, -1.0), 20.0);
+        // NaN grid
+        assert_eq!(snap_to_grid(20.0, f32::NAN), 20.0);
+        assert_eq!(snap_to_grid(f32::NAN, 18.0), 0.0);
+    }
+
+    #[test]
+    fn clamp_margin_works() {
+        assert_eq!(clamp_margin(36.0, 72.0), 36.0);
+        assert_eq!(clamp_margin(-5.0, 72.0), 0.0);
+        assert_eq!(clamp_margin(100.0, 72.0), 72.0);
+        assert_eq!(clamp_margin(f32::NAN, 72.0), 0.0);
+        assert_eq!(clamp_margin(50.0, f32::NAN), 0.0);
+        assert_eq!(clamp_margin(50.0, -10.0), 0.0);
+    }
+
+    #[test]
     fn rect_ops() {
         let a = Rect::new(0.0, 0.0, 10.0, 10.0);
         let b = Rect::new(5.0, 5.0, 10.0, 10.0);
@@ -347,6 +547,15 @@ mod tests {
         assert!(a.contains(Point::new(5.0, 5.0)));
         assert_eq!(Rect::new(0.0, 0.0, -5.0, f32::NAN).w, 0.0);
         assert_eq!(a.inset(1.0, 2.0, 3.0, 4.0), Rect::new(1.0, 2.0, 6.0, 4.0));
+        // center
+        let c = a.center();
+        assert_eq!(c.x, 5.0);
+        assert_eq!(c.y, 5.0);
+        // intersection
+        let i = a.intersection(&b).unwrap();
+        assert_eq!(i, Rect::new(5.0, 5.0, 5.0, 5.0));
+        let no_overlap = Rect::new(20.0, 20.0, 5.0, 5.0);
+        assert!(a.intersection(&no_overlap).is_none());
     }
 
     #[test]
@@ -354,5 +563,22 @@ mod tests {
         assert_eq!(paper_name(612.0, 792.0), Some("Letter"));
         assert_eq!(paper_name(792.0, 612.0), Some("Letter"));
         assert_eq!(paper_name(100.0, 100.0), None);
+    }
+
+    #[test]
+    fn paper_size_in_units() {
+        // A4 in mm should be ~210 × 297
+        let (w, h) = paper_size_in("A4", Unit::Millimeters).unwrap();
+        assert!((w - 210.0).abs() < 0.5);
+        assert!((h - 297.0).abs() < 0.5);
+        // Letter in inches should be 8.5 × 11
+        let (w, h) = paper_size_in("Letter", Unit::Inches).unwrap();
+        assert!((w - 8.5).abs() < 0.01);
+        assert!((h - 11.0).abs() < 0.01);
+        // case-insensitive
+        assert!(paper_size_in("a4", Unit::Points).is_some());
+        assert!(paper_size_in("LETTER", Unit::Centimeters).is_some());
+        // unknown
+        assert!(paper_size_in("Tabloid XL", Unit::Inches).is_none());
     }
 }

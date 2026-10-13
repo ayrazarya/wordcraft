@@ -119,6 +119,8 @@ fn new(s: &mut Session, v: &Value) -> CmdResult {
         "letter" => crate::sample::letter(),
         "resume" => crate::sample::resume(),
         "report" => crate::sample::report(),
+        "skripsi" => crate::sample::skripsi(),
+        "surat_resmi" | "surat" => crate::sample::surat_resmi(),
         // The Normal template: the region's paper (#838), written in the editing language (the
         // templates' text is English).
         _ => {

@@ -180,8 +180,15 @@ fn template_tile(ui: &mut Ui, app: &mut WordApp, label: &str, template: &str) {
 }
 
 /// The built-in templates in gallery order: display label and the `file.new` template id.
-const TEMPLATES: [(&str, &str); 5] =
-    [("Blank document", "blank"), ("Studio handbook (sample)", "sample"), ("Letter", "letter"), ("Résumé", "resume"), ("Report", "report")];
+const TEMPLATES: [(&str, &str); 7] = [
+    ("Blank document", "blank"),
+    ("Studio handbook (sample)", "sample"),
+    ("Letter", "letter"),
+    ("Résumé", "resume"),
+    ("Report", "report"),
+    ("Skripsi (Akademik 4-4-3-3)", "skripsi"),
+    ("Surat Resmi / Dinas", "surat_resmi"),
+];
 
 /// How many templates Home shows before "More templates" (the rest are on New).
 const HOME_TEMPLATES: usize = 4;
@@ -400,10 +407,11 @@ mod tests {
     #[test]
     fn template_search_matches_labels_case_insensitively() {
         let ids = |q: &str| matching_templates(q).into_iter().map(|(_, id)| id).collect::<Vec<_>>();
-        assert_eq!(ids(""), ["blank", "sample", "letter", "resume", "report"]);
+        assert_eq!(ids(""), ["blank", "sample", "letter", "resume", "report", "skripsi", "surat_resmi"]);
         assert_eq!(ids("  LETTER "), ["letter"]);
-        assert_eq!(ids("re"), ["resume", "report"]);
+        assert_eq!(ids("re"), ["resume", "report", "surat_resmi"]);
         assert_eq!(ids("résumé"), ["resume"]);
+        assert_eq!(ids("skripsi"), ["skripsi"]);
         assert!(ids("no such template").is_empty());
     }
 

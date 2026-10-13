@@ -180,6 +180,18 @@ pub struct ViewState {
     /// Developer › Design Mode: every content control shows its frame and title.
     #[serde(default)]
     pub design_mode: bool,
+    /// View › Window › View Side by Side
+    #[serde(default)]
+    pub side_by_side: bool,
+    /// View › Window › Synchronous Scrolling
+    #[serde(default)]
+    pub sync_scroll: bool,
+    /// View › Window › Split view
+    #[serde(default)]
+    pub split_view: bool,
+    /// AI Assistant sidebar pane
+    #[serde(default)]
+    pub ai_pane: bool,
 }
 
 fn on() -> bool {
@@ -237,6 +249,10 @@ impl Default for ViewState {
             hide_white_space: false,
             outline: Default::default(),
             design_mode: false,
+            side_by_side: false,
+            sync_scroll: false,
+            split_view: false,
+            ai_pane: false,
         }
     }
 }
