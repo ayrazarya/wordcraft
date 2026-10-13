@@ -52,6 +52,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .pure(),
         CommandSpec::new("view.navigationPane", "Navigation Pane", "View › Show", |s, v| toggle(s, v, |x| &mut x.nav_pane)).pure(),
         CommandSpec::new("view.aiPane", "AI Assistant", "View › Show", |s, v| toggle(s, v, |x| &mut x.ai_pane)).params(r#"{"value"?: bool}"#).pure(),
+        CommandSpec::new("view.versionHistory", "Version History", "View › Show", |s, v| toggle(s, v, |x| &mut x.version_pane))
+            .params(r#"{"value"?: bool}"#)
+            .pure(),
         CommandSpec::new("view.zoom", "Zoom", "View › Zoom", zoom)
             .params(r#"{"value": percent (10-500) | "pageWidth" | "onePage" | "multiplePages"}"#)
             .pure(),

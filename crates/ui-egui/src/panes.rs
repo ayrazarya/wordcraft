@@ -100,6 +100,19 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                 crate::ai_chat::show(app, ui);
             });
     }
+    if app.session.view.version_pane {
+        egui::Panel::right("version_pane")
+            .default_size(340.0)
+            .resizable(true)
+            .frame(egui::Frame::NONE.fill(t.panel).inner_margin(10).stroke(Stroke::new(1.0, t.border)))
+            .show(ui, |ui| {
+                if header(ui, "Version History") {
+                    let _ = app.run("view.versionHistory", json!({"value": false}));
+                    return;
+                }
+                version_history(app, ui);
+            });
+    }
 }
 
 pub(crate) fn header(ui: &mut Ui, title: &str) -> bool {
@@ -742,6 +755,533 @@ fn camel_words(s: &str) -> String {
         }
     }
     out
+}
+
+// ─── Version History pane ──────────────────────────────────────────────────
+
+/// The Version History side pane: a Git-like offline version control UI.
+fn version_history(app: &mut WordApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+
+    // ── Branch selector ──
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(tl!("Branch:")).font(semibold(12.0)));
+        let branch_id = egui::Id::new("version_branch_combo");
+        let branches_result = app.session.run("file.versions", &json!({"listBranches": true}));
+        let current = branches_result.as_ref().ok().and_then(|v| v.get("current")).and_then(Value::as_str).unwrap_or("main").to_string();
+        let branches: Vec<String> = branches_result
+            .ok()
+            .and_then(|v| v.get("branches").and_then(Value::as_array).cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect();
+        let mut selected = current.clone();
+        egui::ComboBox::from_id_salt(branch_id).selected_text(&selected).width(ui.available_width() - 80.0).show_ui(ui, |ui| {
+            for b in &branches {
+                if ui.selectable_label(*b == selected, b).clicked() {
+                    selected = b.clone();
+                }
+            }
+        });
+        if selected != current {
+            let _ = app.run("file.versions", json!({"branch": selected}));
+        }
+    });
+
+    // ── New branch button ──
+    let new_branch_id = egui::Id::new("version_new_branch");
+    let mut new_branch_open = ui.data(|d| d.get_temp::<bool>(new_branch_id)).unwrap_or(false);
+    ui.horizontal(|ui| {
+        if ui.small_button(tl!("+ New Branch")).clicked() {
+            new_branch_open = !new_branch_open;
+            ui.data_mut(|d| d.insert_temp(new_branch_id, new_branch_open));
+        }
+    });
+    if new_branch_open {
+        let input_id = egui::Id::new("version_new_branch_input");
+        let mut name = ui.data(|d| d.get_temp::<String>(input_id)).unwrap_or_default();
+        ui.horizontal(|ui| {
+            let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text(tl!("Branch name")).desired_width(ui.available_width() - 60.0));
+            if r.changed() {
+                ui.data_mut(|d| d.insert_temp(input_id, name.clone()));
+            }
+            if ui.small_button("✓").clicked() && !name.trim().is_empty() {
+                let _ = app.run("file.versions", json!({"branch": name.trim()}));
+                ui.data_mut(|d| d.remove::<String>(input_id));
+                ui.data_mut(|d| d.insert_temp(new_branch_id, false));
+            }
+        });
+    }
+
+    ui.separator();
+
+    // ── Commit form ──
+    ui.label(egui::RichText::new(tl!("Create Version")).font(semibold(13.0)));
+    let detected_info = app.session.run("file.versions", &json!({"detectUser": true})).unwrap_or_default();
+    let display_author = detected_info.get("resolvedAuthor").and_then(Value::as_str).unwrap_or("WordCraft User");
+    let is_os_detected = detected_info.get("systemUser").and_then(Value::as_str).is_some_and(|u| !u.is_empty() && display_author == u);
+    ui.horizontal(|ui| {
+        let tag = if is_os_detected { " [offline OS user]" } else { "" };
+        ui.label(egui::RichText::new(format!("Author: {display_author}{tag}")).font(regular(11.0)).color(t.text_dim));
+    });
+
+    let label_id = egui::Id::new("version_commit_label");
+    let msg_id = egui::Id::new("version_commit_msg");
+    let mut label_text = ui.data(|d| d.get_temp::<String>(label_id)).unwrap_or_default();
+    let mut msg_text = ui.data(|d| d.get_temp::<String>(msg_id)).unwrap_or_default();
+
+    ui.add(egui::TextEdit::singleline(&mut label_text).hint_text(tl!("Version name (e.g. Draft 1)")).desired_width(f32::INFINITY));
+    ui.data_mut(|d| d.insert_temp(label_id, label_text.clone()));
+    ui.add(egui::TextEdit::multiline(&mut msg_text).hint_text(tl!("Description (optional)")).desired_rows(2).desired_width(f32::INFINITY));
+    ui.data_mut(|d| d.insert_temp(msg_id, msg_text.clone()));
+
+    ui.horizontal(|ui| {
+        let can_commit = !label_text.trim().is_empty();
+        if ui.add_enabled(can_commit, egui::Button::new(egui::RichText::new(tl!("Commit")).font(semibold(12.0)))).clicked() {
+            let _ = app.run("file.versions", json!({"save": label_text.trim(), "message": msg_text.trim()}));
+            ui.data_mut(|d| d.remove::<String>(label_id));
+            ui.data_mut(|d| d.remove::<String>(msg_id));
+        }
+        if ui.small_button(tl!("Auto-save")).on_hover_text(tl!("Create an automatic checkpoint of the current state")).clicked() {
+            let _ = app.run("file.versions", json!({"auto": true}));
+        }
+    });
+
+    ui.separator();
+
+    // ── Version timeline ──
+    let versions = app.session.run("file.versions", &json!({})).unwrap_or_default();
+    let list = versions.as_array().cloned().unwrap_or_default();
+
+    let count_label = if list.len() == 1 { "1 version".to_string() } else { format!("{} versions", list.len()) };
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(tl!("Timeline")).font(semibold(14.0)));
+        ui.label(egui::RichText::new(count_label).small().weak());
+    });
+
+    if list.is_empty() {
+        ui.add_space(12.0);
+        ui.label(egui::RichText::new(tl!("No versions yet.\n\nCreate your first version by entering a name above and clicking Commit, or enable auto-save checkpoints.\n\nVersions are stored locally on your machine — no internet needed.")).weak());
+        return;
+    }
+
+    ui.add_space(4.0);
+
+    // Show versions newest first.
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for entry in list.iter().rev() {
+            let idx = entry.get("index").and_then(Value::as_u64).unwrap_or(0);
+            let label = entry.get("label").and_then(Value::as_str).unwrap_or("");
+            let message = entry.get("message").and_then(Value::as_str).unwrap_or("");
+            let date = entry.get("date").and_then(Value::as_str).unwrap_or("");
+            let author = entry.get("author").and_then(Value::as_str).unwrap_or("");
+            let branch = entry.get("branch").and_then(Value::as_str).unwrap_or("");
+            let kind = entry.get("kind").and_then(Value::as_str).unwrap_or("manual");
+            let word_count = entry.get("wordCount").and_then(Value::as_u64).unwrap_or(0);
+            let diff_summary = entry.get("diffSummary").and_then(Value::as_str).unwrap_or("");
+
+            // Card colour based on kind.
+            let card_color = match kind {
+                "manual" => t.accent.gamma_multiply(0.15),
+                "branch" => t.green.gamma_multiply(0.15),
+                _ => t.input, // auto
+            };
+            let border_color = match kind {
+                "manual" => t.accent.gamma_multiply(0.5),
+                "branch" => t.green.gamma_multiply(0.5),
+                _ => t.border,
+            };
+
+            egui::Frame::NONE.fill(card_color).stroke(Stroke::new(1.0, border_color)).corner_radius(6).inner_margin(10).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+
+                // Header: badge + label.
+                ui.horizontal(|ui| {
+                    let badge = match kind {
+                        "manual" => "[Commit]",
+                        "branch" => "[Branch]",
+                        _ => "[Auto]",
+                    };
+                    ui.label(egui::RichText::new(badge).font(semibold(10.5)).color(t.accent));
+                    ui.label(egui::RichText::new(label).font(semibold(13.0)).color(t.text));
+                });
+
+                // Date and author.
+                ui.horizontal(|ui| {
+                    let stamp = comment_stamp(date);
+                    ui.label(egui::RichText::new(stamp).font(regular(10.5)).color(t.text_dim));
+                    if !author.is_empty() {
+                        ui.label(egui::RichText::new(format!("• {author}")).font(regular(10.5)).color(t.text_dim));
+                    }
+                });
+
+                // Branch badge.
+                if !branch.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("Branch: {branch}")).font(regular(10.0)).color(t.green));
+                    });
+                }
+
+                // Message.
+                if !message.is_empty() {
+                    ui.label(egui::RichText::new(message).font(regular(11.5)).color(t.text));
+                }
+
+                // Diff summary and stats.
+                ui.horizontal(|ui| {
+                    if !diff_summary.is_empty() {
+                        let diff_color = if diff_summary.starts_with('+') {
+                            t.green
+                        } else if diff_summary.starts_with('-') {
+                            egui::Color32::from_rgb(220, 80, 60)
+                        } else {
+                            t.text_dim
+                        };
+                        ui.label(egui::RichText::new(diff_summary).font(regular(10.5)).color(diff_color));
+                    }
+                    ui.label(egui::RichText::new(format!("{word_count} words")).font(regular(10.0)).color(t.text_disabled));
+                });
+
+                // Actions.
+                ui.horizontal(|ui| {
+                    if ui.small_button(tl!("Restore")).on_hover_text(tl!("Restore document to this version")).clicked() {
+                        let _ = app.run("file.versions", json!({"restore": idx}));
+                    }
+                    // Compare button with inline diff display.
+                    let compare_id = egui::Id::new(("version_compare", idx));
+                    let mut comparing = ui.data(|d| d.get_temp::<bool>(compare_id)).unwrap_or(false);
+                    if ui.small_button(if comparing { tl!("Hide Diff") } else { tl!("Compare") }).clicked() {
+                        comparing = !comparing;
+                        ui.data_mut(|d| d.insert_temp(compare_id, comparing));
+                    }
+                    if ui.small_button(tl!("Delete")).clicked() {
+                        let _ = app.run("file.versions", json!({"delete": idx}));
+                    }
+                });
+
+                // Inline diff viewer.
+                let compare_id = egui::Id::new(("version_compare", idx));
+                if ui.data(|d| d.get_temp::<bool>(compare_id)).unwrap_or(false) {
+                    ui.separator();
+                    let cmp = app.session.run("file.versions", &json!({"compare": idx}));
+                    if let Ok(cmp) = cmp {
+                        let summary = cmp.get("summary").and_then(Value::as_str).unwrap_or("");
+                        let old_w = cmp.get("oldWords").and_then(Value::as_u64).unwrap_or(0);
+                        let new_w = cmp.get("newWords").and_then(Value::as_u64).unwrap_or(0);
+                        ui.label(egui::RichText::new(format!("Diff: {summary}")).font(semibold(11.0)));
+                        ui.label(egui::RichText::new(format!("Words: {old_w} -> {new_w}")).font(regular(10.5)).color(t.text_dim));
+
+                        // Full comparison window trigger button.
+                        let full_window_id = egui::Id::new("version_compare_window_target");
+                        if ui
+                            .button(egui::RichText::new(tl!("Open Full Comparison Window…")).font(semibold(10.5)))
+                            .on_hover_text(tl!("View side-by-side or unified paragraph comparison in a wide window"))
+                            .clicked()
+                        {
+                            ui.data_mut(|d| d.insert_temp(full_window_id, Some(idx as usize)));
+                        }
+
+                        if let Some(changes) = cmp.get("changes").and_then(Value::as_array) {
+                            for change in changes.iter().take(12) {
+                                let p_idx = change.get("paragraph").and_then(Value::as_u64).unwrap_or(0);
+                                let kind = change.get("kind").and_then(Value::as_str).unwrap_or("modified");
+                                let old_text = change.get("old").and_then(Value::as_str).unwrap_or("");
+                                let new_text = change.get("new").and_then(Value::as_str).unwrap_or("");
+
+                                egui::Frame::NONE.fill(t.input).stroke(Stroke::new(1.0, t.border)).corner_radius(4).inner_margin(6).show(ui, |ui| {
+                                    let old_para = change.get("oldPara").and_then(Value::as_u64);
+                                    let new_para = change.get("newPara").and_then(Value::as_u64);
+                                    let para_title = match (old_para, new_para) {
+                                        (Some(o), Some(n)) if o == n => format!("Paragraph #{}", o),
+                                        (Some(o), Some(n)) => format!("Paragraph #{} → #{}", o, n),
+                                        (None, Some(n)) => format!("Paragraph +#{}", n),
+                                        (Some(o), None) => format!("Paragraph -#{}", o),
+                                        _ => format!("Paragraph #{}", p_idx + 1),
+                                    };
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(para_title).font(semibold(10.5)));
+                                        let (badge, color) = match kind {
+                                            "added" => ("[Added]", t.green),
+                                            "deleted" => ("[Deleted]", egui::Color32::from_rgb(220, 60, 60)),
+                                            _ => ("[Modified]", egui::Color32::from_rgb(230, 160, 40)),
+                                        };
+                                        ui.label(egui::RichText::new(badge).font(semibold(10.0)).color(color));
+                                    });
+
+                                    if !old_text.is_empty() && kind != "added" {
+                                        egui::Frame::NONE
+                                            .fill(egui::Color32::from_rgba_unmultiplied(240, 70, 70, 25))
+                                            .corner_radius(3)
+                                            .inner_margin(4)
+                                            .show(ui, |ui| {
+                                                ui.set_width(ui.available_width());
+                                                ui.label(
+                                                    egui::RichText::new("- Before:").font(semibold(9.5)).color(egui::Color32::from_rgb(200, 50, 50)),
+                                                );
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(old_text).font(regular(10.0)).color(egui::Color32::from_rgb(210, 60, 60)),
+                                                    )
+                                                    .wrap(),
+                                                );
+                                            });
+                                        ui.add_space(2.0);
+                                    }
+
+                                    if !new_text.is_empty() && kind != "deleted" {
+                                        egui::Frame::NONE
+                                            .fill(egui::Color32::from_rgba_unmultiplied(50, 190, 80, 25))
+                                            .corner_radius(3)
+                                            .inner_margin(4)
+                                            .show(ui, |ui| {
+                                                ui.set_width(ui.available_width());
+                                                ui.label(egui::RichText::new("+ After:").font(semibold(9.5)).color(t.green));
+                                                ui.add(egui::Label::new(egui::RichText::new(new_text).font(regular(10.0)).color(t.green)).wrap());
+                                            });
+                                    }
+                                });
+                                ui.add_space(3.0);
+                            }
+                            if changes.len() > 12 {
+                                ui.label(
+                                    egui::RichText::new(format!("… and {} more changes (open full window to see all)", changes.len() - 12))
+                                        .font(regular(10.0))
+                                        .color(t.text_dim),
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(6.0);
+        }
+    });
+
+    // ── Full-screen / Wide Comparison Window ──
+    let full_window_id = egui::Id::new("version_compare_window_target");
+    let full_target = ui.data(|d| d.get_temp::<Option<usize>>(full_window_id)).flatten();
+    if let Some(target_idx) = full_target {
+        let cmp_result = app.session.run("file.versions", &json!({"compare": target_idx}));
+        if let Ok(cmp) = cmp_result {
+            let version_info = cmp.get("version").cloned().unwrap_or_default();
+            let v_label = version_info.get("label").and_then(Value::as_str).unwrap_or("Version");
+            let v_date = version_info.get("date").and_then(Value::as_str).unwrap_or("");
+            let v_author = version_info.get("author").and_then(Value::as_str).unwrap_or("");
+            let summary = cmp.get("summary").and_then(Value::as_str).unwrap_or("");
+            let old_w = cmp.get("oldWords").and_then(Value::as_u64).unwrap_or(0);
+            let new_w = cmp.get("newWords").and_then(Value::as_u64).unwrap_or(0);
+
+            let mut is_open = true;
+            let window_title = format!("Compare: \"{}\" vs Current Document", v_label);
+
+            egui::Window::new(window_title)
+                .open(&mut is_open)
+                .default_size(vec2(880.0, 580.0))
+                .min_size(vec2(580.0, 380.0))
+                .resizable(true)
+                .collapsible(false)
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        let mode_id = egui::Id::new("version_diff_view_mode");
+                        let mut mode = ui.data(|d| d.get_temp::<String>(mode_id)).unwrap_or_else(|| "side_by_side".into());
+                        ui.label(egui::RichText::new("View:").font(semibold(12.0)));
+                        if ui.selectable_label(mode == "side_by_side", tl!("Side-by-Side")).clicked() {
+                            mode = "side_by_side".into();
+                            ui.data_mut(|d| d.insert_temp(mode_id, mode.clone()));
+                        }
+                        if ui.selectable_label(mode == "unified", tl!("Unified")).clicked() {
+                            mode = "unified".into();
+                            ui.data_mut(|d| d.insert_temp(mode_id, mode.clone()));
+                        }
+
+                        ui.separator();
+                        ui.label(egui::RichText::new(format!("Diff: {summary}")).font(semibold(11.5)).color(t.accent));
+                        ui.label(egui::RichText::new(format!("(Words: {old_w} -> {new_w})")).font(regular(11.0)).color(t.text_dim));
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(egui::RichText::new(tl!("Restore This Version")).font(semibold(12.0))).clicked() {
+                                let _ = app.run("file.versions", json!({"restore": target_idx}));
+                            }
+                        });
+                    });
+                    ui.separator();
+
+                    let changes = cmp.get("changes").and_then(Value::as_array).cloned().unwrap_or_default();
+                    if changes.is_empty() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(40.0);
+                            ui.label(
+                                egui::RichText::new("No text differences between this version and the current document.")
+                                    .font(regular(13.0))
+                                    .color(t.text_dim),
+                            );
+                        });
+                    } else {
+                        let mode_id = egui::Id::new("version_diff_view_mode");
+                        let mode = ui.data(|d| d.get_temp::<String>(mode_id)).unwrap_or_else(|| "side_by_side".into());
+
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            if mode == "side_by_side" {
+                                ui.columns(2, |cols| {
+                                    cols[0].label(
+                                        egui::RichText::new(format!("Saved: {v_label}"))
+                                            .font(semibold(12.5))
+                                            .color(egui::Color32::from_rgb(200, 60, 60)),
+                                    );
+                                    cols[0].label(egui::RichText::new(format!("{v_date} • {v_author}")).font(regular(10.5)).color(t.text_dim));
+                                    cols[1].label(egui::RichText::new("Current Document (Active)").font(semibold(12.5)).color(t.green));
+                                    cols[1].label(egui::RichText::new("Being edited").font(regular(10.5)).color(t.text_dim));
+                                });
+                                ui.separator();
+
+                                for change in &changes {
+                                    let p_idx = change.get("paragraph").and_then(Value::as_u64).unwrap_or(0);
+                                    let kind = change.get("kind").and_then(Value::as_str).unwrap_or("modified");
+                                    let old_text = change.get("old").and_then(Value::as_str).unwrap_or("");
+                                    let new_text = change.get("new").and_then(Value::as_str).unwrap_or("");
+
+                                    let old_para = change.get("oldPara").and_then(Value::as_u64);
+                                    let new_para = change.get("newPara").and_then(Value::as_u64);
+                                    let para_title = match (old_para, new_para) {
+                                        (Some(o), Some(n)) if o == n => format!("Paragraph #{}", o),
+                                        (Some(o), Some(n)) => format!("Paragraph #{} → #{}", o, n),
+                                        (None, Some(n)) => format!("Paragraph +#{}", n),
+                                        (Some(o), None) => format!("Paragraph -#{}", o),
+                                        _ => format!("Paragraph #{}", p_idx + 1),
+                                    };
+
+                                    ui.group(|ui| {
+                                        ui.label(egui::RichText::new(format!("{para_title} [{kind}]")).font(semibold(11.0)).color(t.text_dim));
+                                        ui.columns(2, |cols| {
+                                            if !old_text.is_empty() {
+                                                egui::Frame::NONE
+                                                    .fill(if kind == "added" {
+                                                        t.input
+                                                    } else {
+                                                        egui::Color32::from_rgba_unmultiplied(240, 70, 70, 25)
+                                                    })
+                                                    .stroke(Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(220, 60, 60, 60)))
+                                                    .inner_margin(8)
+                                                    .corner_radius(4)
+                                                    .show(&mut cols[0], |ui| {
+                                                        ui.set_width(ui.available_width());
+                                                        ui.add(
+                                                            egui::Label::new(
+                                                                egui::RichText::new(old_text)
+                                                                    .font(regular(11.0))
+                                                                    .color(egui::Color32::from_rgb(210, 60, 60)),
+                                                            )
+                                                            .wrap(),
+                                                        );
+                                                    });
+                                            } else {
+                                                cols[0].label(egui::RichText::new("(none)").font(regular(10.5)).color(t.text_disabled));
+                                            }
+
+                                            if !new_text.is_empty() {
+                                                egui::Frame::NONE
+                                                    .fill(if kind == "deleted" {
+                                                        t.input
+                                                    } else {
+                                                        egui::Color32::from_rgba_unmultiplied(50, 190, 80, 25)
+                                                    })
+                                                    .stroke(Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(50, 180, 80, 60)))
+                                                    .inner_margin(8)
+                                                    .corner_radius(4)
+                                                    .show(&mut cols[1], |ui| {
+                                                        ui.set_width(ui.available_width());
+                                                        ui.add(
+                                                            egui::Label::new(egui::RichText::new(new_text).font(regular(11.0)).color(t.green)).wrap(),
+                                                        );
+                                                    });
+                                            } else {
+                                                cols[1].label(egui::RichText::new("(deleted)").font(regular(10.5)).color(t.text_disabled));
+                                            }
+                                        });
+                                    });
+                                    ui.add_space(4.0);
+                                }
+                            } else {
+                                for change in &changes {
+                                    let p_idx = change.get("paragraph").and_then(Value::as_u64).unwrap_or(0);
+                                    let kind = change.get("kind").and_then(Value::as_str).unwrap_or("modified");
+                                    let old_text = change.get("old").and_then(Value::as_str).unwrap_or("");
+                                    let new_text = change.get("new").and_then(Value::as_str).unwrap_or("");
+                                    let old_para = change.get("oldPara").and_then(Value::as_u64);
+                                    let new_para = change.get("newPara").and_then(Value::as_u64);
+                                    let para_title = match (old_para, new_para) {
+                                        (Some(o), Some(n)) if o == n => format!("Paragraph #{}", o),
+                                        (Some(o), Some(n)) => format!("Paragraph #{} → #{}", o, n),
+                                        (None, Some(n)) => format!("Paragraph +#{}", n),
+                                        (Some(o), None) => format!("Paragraph -#{}", o),
+                                        _ => format!("Paragraph #{}", p_idx + 1),
+                                    };
+
+                                    ui.group(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new(para_title).font(semibold(11.5)));
+                                            let (k_label, k_color) = match kind {
+                                                "added" => ("[Added]", t.green),
+                                                "deleted" => ("[Deleted]", egui::Color32::from_rgb(220, 60, 60)),
+                                                _ => ("[Modified]", egui::Color32::from_rgb(220, 160, 40)),
+                                            };
+                                            ui.label(egui::RichText::new(k_label).font(semibold(10.5)).color(k_color));
+                                        });
+
+                                        if !old_text.is_empty() && kind != "added" {
+                                            egui::Frame::NONE
+                                                .fill(egui::Color32::from_rgba_unmultiplied(240, 70, 70, 25))
+                                                .stroke(Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(220, 60, 60, 60)))
+                                                .inner_margin(8)
+                                                .corner_radius(4)
+                                                .show(ui, |ui| {
+                                                    ui.set_width(ui.available_width());
+                                                    ui.label(
+                                                        egui::RichText::new("- Previous Version:")
+                                                            .font(semibold(10.0))
+                                                            .color(egui::Color32::from_rgb(220, 60, 60)),
+                                                    );
+                                                    ui.add(
+                                                        egui::Label::new(
+                                                            egui::RichText::new(old_text)
+                                                                .font(regular(11.0))
+                                                                .color(egui::Color32::from_rgb(220, 60, 60)),
+                                                        )
+                                                        .wrap(),
+                                                    );
+                                                });
+                                            ui.add_space(2.0);
+                                        }
+
+                                        if !new_text.is_empty() && kind != "deleted" {
+                                            egui::Frame::NONE
+                                                .fill(egui::Color32::from_rgba_unmultiplied(50, 190, 80, 25))
+                                                .stroke(Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(50, 180, 80, 60)))
+                                                .inner_margin(8)
+                                                .corner_radius(4)
+                                                .show(ui, |ui| {
+                                                    ui.set_width(ui.available_width());
+                                                    ui.label(egui::RichText::new("+ Current Document:").font(semibold(10.0)).color(t.green));
+                                                    ui.add(egui::Label::new(egui::RichText::new(new_text).font(regular(11.0)).color(t.green)).wrap());
+                                                });
+                                        }
+                                    });
+                                    ui.add_space(5.0);
+                                }
+                            }
+                        });
+                    }
+                });
+
+            if !is_open {
+                ui.data_mut(|d| d.remove::<Option<usize>>(full_window_id));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

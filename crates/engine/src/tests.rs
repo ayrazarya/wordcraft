@@ -5044,3 +5044,96 @@ fn selected_markdown_exports_formatted_text() {
     let md = s.selected_markdown();
     assert!(md.contains("Hello") && md.contains("**world**"), "markdown contains bold: {md}");
 }
+
+#[test]
+fn version_control_lifecycle_and_offline_detection() {
+    let mut s = s();
+
+    // Test offline user detection
+    let det = run(&mut s, "file.versions", json!({"detectUser": true}));
+    assert!(det.get("resolvedAuthor").is_some());
+
+    // Insert text and save initial commit
+    run(&mut s, "text.insert", json!({"text": "Chapter 1: The Beginning."}));
+    run(&mut s, "file.versions", json!({"save": "v1.0", "message": "Initial draft"}));
+    assert_eq!(s.versions.len(), 1);
+    assert_eq!(s.versions[0].label, "v1.0");
+    assert_eq!(s.versions[0].message, "Initial draft");
+    assert_eq!(s.versions[0].kind, crate::session::VersionKind::Manual);
+
+    // Make more edits and test auto checkpoint
+    run(&mut s, "select.all", json!({}));
+    run(&mut s, "text.delete", json!({}));
+    run(&mut s, "text.insert", json!({"text": "Chapter 1: A Revised Beginning with more words."}));
+    run(&mut s, "file.versions", json!({"auto": true}));
+    assert_eq!(s.versions.len(), 2);
+    assert_eq!(s.versions[1].kind, crate::session::VersionKind::Auto);
+
+    // Calling auto again without edits shouldn't create duplicate
+    run(&mut s, "file.versions", json!({"auto": true}));
+    assert_eq!(s.versions.len(), 2);
+
+    // Test branch creation
+    run(&mut s, "file.versions", json!({"branch": "experimental"}));
+    assert_eq!(s.version_branch, "experimental");
+    assert_eq!(s.versions.len(), 3);
+    assert_eq!(s.versions[2].kind, crate::session::VersionKind::Branch);
+
+    let branches = run(&mut s, "file.versions", json!({"listBranches": true}));
+    assert_eq!(branches["current"], "experimental");
+    let branch_names: Vec<&str> = branches["branches"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+    assert!(branch_names.contains(&"main"));
+    assert!(branch_names.contains(&"experimental"));
+
+    // Test compare
+    let cmp = run(&mut s, "file.versions", json!({"compare": 0}));
+    assert!(cmp.get("summary").is_some());
+    assert!(cmp.get("changes").is_some());
+
+    // Test restore
+    run(&mut s, "file.versions", json!({"restore": 0}));
+    let text = s.doc.plain_text(wordcraft_doc::StoryRef::Body);
+    assert!(text.contains("Chapter 1: The Beginning."));
+
+    // Test delete
+    run(&mut s, "file.versions", json!({"delete": 2}));
+    assert_eq!(s.versions.len(), 2);
+}
+
+#[test]
+fn version_persistence_survives_restart_and_unforced_closure() {
+    let tmp = std::env::temp_dir().join(format!("wordcraft_persist_test_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let doc_path = tmp.join("unsaved_commits.docx");
+
+    let mut s1 = s();
+    s1.path = Some(doc_path.clone());
+
+    run(&mut s1, "text.insert", json!({"text": "First commit contents."}));
+    run(&mut s1, "file.versions", json!({"save": "Commit #1", "message": "First message"}));
+
+    run(&mut s1, "text.insert", json!({"text": " Second commit contents."}));
+    run(&mut s1, "file.versions", json!({"save": "Commit #2", "message": "Second message"}));
+
+    assert_eq!(s1.versions.len(), 2);
+    // Note: s1 document was NEVER saved to doc_path via file.save!
+
+    // Now simulate closing the app and launching a new session s2
+    let mut s2 = s();
+    s2.path = Some(doc_path.clone());
+    // Load persisted versions
+    crate::version_storage::load_versions(&mut s2);
+
+    assert_eq!(s2.versions.len(), 2, "Commits must survive app closure even without file save");
+    assert_eq!(s2.versions[0].label, "Commit #1");
+    assert_eq!(s2.versions[0].message, "First message");
+    assert_eq!(s2.versions[1].label, "Commit #2");
+    assert_eq!(s2.versions[1].message, "Second message");
+
+    // Test restore from the loaded commit
+    run(&mut s2, "file.versions", json!({"restore": 0}));
+    assert_eq!(s2.doc.plain_text(wordcraft_doc::StoryRef::Body), "First commit contents.");
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&tmp);
+}

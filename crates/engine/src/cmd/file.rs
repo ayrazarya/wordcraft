@@ -157,6 +157,7 @@ fn open(s: &mut Session, v: &Value) -> CmdResult {
     }
     s.set_document(doc);
     s.path = Some(path.into());
+    crate::version_storage::load_versions(s);
     // Like Word, a document opened with a password is saved with it again.
     if encrypted {
         s.password = password.map(crate::io::Password::new);
@@ -207,8 +208,13 @@ fn save(s: &mut Session, v: &Value) -> CmdResult {
     let encrypted = password.is_some() && crate::io::can_encrypt(&path.to_string_lossy());
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     if ["docx", "docm", "dotx", "dotm", "odt", "rtf", "json", "xml"].contains(&ext.as_str()) {
+        let was_untitled = s.path.is_none();
         s.path = Some(path.clone());
         s.dirty = false;
+        if was_untitled {
+            crate::version_storage::migrate_untitled_versions(s, &path);
+        }
+        crate::version_storage::persist_versions(s);
     }
     Ok(json!({"saved": true, "path": path.to_string_lossy(), "encrypted": encrypted}))
 }

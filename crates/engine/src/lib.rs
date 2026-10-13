@@ -18,6 +18,7 @@ pub mod ribbon;
 pub mod sample;
 mod session;
 pub mod speech;
+pub use io::version_storage;
 
 use std::collections::HashMap;
 

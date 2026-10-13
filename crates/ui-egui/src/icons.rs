@@ -1225,6 +1225,11 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32, accent: Color32) {
             pen.rect(7.0, 2.0, 13.0, 9.0, c);
             pen.line(&[(5.0, 12.0), (15.0, 12.0)]);
         }
+        "versionHistory" => {
+            pen.circle(10.0, 10.0, 6.5, c);
+            pen.line_c(&[(10.0, 6.0), (10.0, 10.0), (13.0, 10.0)], a);
+            pen.line_c(&[(4.5, 9.5), (3.0, 10.0), (3.5, 8.0)], a);
+        }
         "plus" => {
             pen.line(&[(10.0, 4.0), (10.0, 16.0)]);
             pen.line(&[(4.0, 10.0), (16.0, 10.0)]);

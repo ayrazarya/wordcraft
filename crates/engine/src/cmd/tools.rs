@@ -393,26 +393,11 @@ pub fn specs() -> Vec<CommandSpec> {
             s.run("review.restrict", &json!({"mode": mode}))
         })
         .params(r#"{"mode": "none|readOnly|comments|trackedChanges"}"#),
-        CommandSpec::new("file.versions", "Version History", "File › Info", |s, v| {
-            if let Some(label) = p::str(v, "save") {
-                s.versions.push((label.to_string(), super::now_iso(), s.doc.clone()));
-                if s.versions.len() > 50 {
-                    s.versions.remove(0);
-                }
-            }
-            if let Some(i) = p::u64(v, "restore") {
-                let (_, _, d) = s.versions.get(i as usize).cloned().ok_or_else(|| CmdError::Params("no such version".into()))?;
-                s.checkpoint("Restore Version");
-                s.doc = d;
-                s.touch();
-                s.clamp_selection();
-            }
-            Ok(Value::Array(s.versions.iter().enumerate().map(|(i, (l, d, _))| json!({"index": i, "label": l, "date": d})).collect()))
-        })
-        .params(r#"{"save"?: label, "restore"?: index}"#)
-        .pure(),
+        CommandSpec::new("file.versions", "Version History", "File › Info", version_history)
+            .params(r#"{"save"?: label, "message"?: string, "restore"?: index, "delete"?: index, "branch"?: string (switch or create), "listBranches"?: true, "compare"?: index, "auto"?: true (auto-checkpoint)} → [{index, label, message, date, author, branch, kind, wordCount, paraCount, diffSummary}]"#)
+            .pure(),
         CommandSpec::new("file.recover", "Recover Unsaved Documents", "File › Info", |s, _| {
-            Ok(Value::Array(s.versions.iter().enumerate().map(|(i, (l, d, _))| json!({"index": i, "label": l, "date": d})).collect()))
+            Ok(Value::Array(s.versions.iter().enumerate().map(|(i, v)| json!({"index": i, "label": v.label, "date": v.date})).collect()))
         })
         .pure(),
         CommandSpec::new("file.newFromTemplate", "New from Template", "File › New", |s, v| {
@@ -749,6 +734,401 @@ fn macros(s: &mut Session, v: &Value) -> CmdResult {
     Ok(Value::Object(
         s.macros.iter().map(|(k, v)| (k.clone(), json!(v.iter().map(|(c, p)| json!({"command": c, "params": p})).collect::<Vec<_>>()))).collect(),
     ))
+}
+
+/// Maximum versions kept in memory (older auto-checkpoints are pruned first).
+const MAX_VERSIONS: usize = 200;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Op {
+    Same,
+    Del,
+    Ins,
+}
+
+/// Longest sequence the comparison table is built for; the rest of a longer sequence is
+/// compared as deleted and inserted, never dropped.
+const MAX_LCS: usize = 4000;
+
+/// LCS edit script between two sequences: the common start and end are matched first, then the
+/// middle (bounded size).
+fn lcs_ops<T: PartialEq>(a: &[T], b: &[T]) -> Vec<Op> {
+    let pre = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let (ra, rb) = (a.get(pre..).unwrap_or_default(), b.get(pre..).unwrap_or_default());
+    let suf = ra.iter().rev().zip(rb.iter().rev()).take_while(|(x, y)| x == y).count();
+    let (a, b) = (ra.get(..ra.len() - suf).unwrap_or_default(), rb.get(..rb.len() - suf).unwrap_or_default());
+    let mut ops = vec![Op::Same; pre];
+    let (n, m) = (a.len().min(MAX_LCS), b.len().min(MAX_LCS));
+    let mut t = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            let v = if a.get(i) == b.get(j) {
+                t.get(i + 1).and_then(|r| r.get(j + 1)).copied().unwrap_or(0) + 1
+            } else {
+                t.get(i + 1).and_then(|r| r.get(j)).copied().unwrap_or(0).max(t.get(i).and_then(|r| r.get(j + 1)).copied().unwrap_or(0))
+            };
+            if let Some(c) = t.get_mut(i).and_then(|r| r.get_mut(j)) {
+                *c = v;
+            }
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if a.get(i) == b.get(j) {
+            ops.push(Op::Same);
+            i += 1;
+            j += 1;
+        } else if t.get(i + 1).and_then(|r| r.get(j)) >= t.get(i).and_then(|r| r.get(j + 1)) {
+            ops.push(Op::Del);
+            i += 1;
+        } else {
+            ops.push(Op::Ins);
+            j += 1;
+        }
+    }
+    ops.extend(std::iter::repeat_n(Op::Del, a.len() - i));
+    ops.extend(std::iter::repeat_n(Op::Ins, b.len() - j));
+    ops.extend(std::iter::repeat_n(Op::Same, suf));
+    ops
+}
+
+/// Compute a short diff summary between two documents.
+fn version_diff_summary(old: &wordcraft_doc::Document, new: &wordcraft_doc::Document) -> String {
+    let old_words = old.word_count();
+    let new_words = new.word_count();
+    let old_paras = old.paragraph_count();
+    let new_paras = new.paragraph_count();
+
+    let word_diff = new_words as i64 - old_words as i64;
+    let para_diff = new_paras as i64 - old_paras as i64;
+
+    // Compare paragraph texts using LCS sequence alignment.
+    let old_texts: Vec<String> = old
+        .para_paths(wordcraft_doc::StoryRef::Body)
+        .iter()
+        .filter_map(|p| old.para(wordcraft_doc::StoryRef::Body, p).map(|x| x.plain_text()))
+        .collect();
+    let new_texts: Vec<String> = new
+        .para_paths(wordcraft_doc::StoryRef::Body)
+        .iter()
+        .filter_map(|p| new.para(wordcraft_doc::StoryRef::Body, p).map(|x| x.plain_text()))
+        .collect();
+
+    let changed = {
+        let ops = lcs_ops(&old_texts, &new_texts);
+        let mut count = 0usize;
+        let mut k = 0usize;
+        while k < ops.len() {
+            if ops.get(k) == Some(&Op::Same) {
+                k += 1;
+            } else {
+                let run = ops.get(k..).unwrap_or_default().iter().take_while(|o| **o != Op::Same).count();
+                let dels = ops.get(k..k + run).unwrap_or_default().iter().filter(|o| **o == Op::Del).count();
+                let inss = run - dels;
+                count = count.saturating_add(dels.max(inss));
+                k += run.max(1);
+            }
+        }
+        count
+    };
+
+    let mut parts = Vec::new();
+    if word_diff > 0 {
+        parts.push(format!("+{word_diff} words"));
+    } else if word_diff < 0 {
+        parts.push(format!("{word_diff} words"));
+    }
+    if para_diff > 0 {
+        parts.push(format!("+{para_diff} paragraphs"));
+    } else if para_diff < 0 {
+        parts.push(format!("{para_diff} paragraphs"));
+    }
+    if changed > 0 {
+        parts.push(format!("{changed} changed"));
+    }
+    if parts.is_empty() { "No changes".into() } else { parts.join(", ") }
+}
+
+/// Detect local system username when offline (via OS environment variables).
+fn detect_local_user() -> Option<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        for var in ["USER", "USERNAME", "LOGNAME"] {
+            if let Ok(u) = std::env::var(var) {
+                let trimmed = u.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Serialize a VersionEntry to JSON.
+fn version_to_json(i: usize, v: &crate::session::VersionEntry) -> Value {
+    json!({
+        "index": i,
+        "label": v.label,
+        "message": v.message,
+        "date": v.date,
+        "author": v.author,
+        "branch": v.branch,
+        "kind": match v.kind {
+            crate::session::VersionKind::Manual => "manual",
+            crate::session::VersionKind::Auto => "auto",
+            crate::session::VersionKind::Branch => "branch",
+        },
+        "wordCount": v.word_count,
+        "paraCount": v.para_count,
+        "diffSummary": v.diff_summary,
+    })
+}
+
+/// `file.versions`: the Git-like offline version control command.
+fn version_history(s: &mut Session, v: &Value) -> CmdResult {
+    use crate::session::{VersionEntry, VersionKind};
+
+    let resolve_author = |s: &Session, v: &Value| -> String {
+        if let Some(a) = p::str(v, "author").filter(|a| !a.trim().is_empty()) {
+            return a.to_string();
+        }
+        if !s.author.is_empty() && s.author != "WordCraft User" { s.author.clone() } else { detect_local_user().unwrap_or_else(|| s.author.clone()) }
+    };
+
+    // Detect and inspect local author/user information offline.
+    if p::bool(v, "detectUser") == Some(true) {
+        let system_user = detect_local_user().unwrap_or_default();
+        return Ok(json!({
+            "sessionAuthor": s.author,
+            "systemUser": system_user,
+            "resolvedAuthor": resolve_author(s, v),
+        }));
+    }
+
+    // Lazy load persisted versions if in-memory list is empty.
+    if s.versions.is_empty() {
+        crate::version_storage::load_versions(s);
+    }
+
+    // Save a new version (manual commit).
+    if let Some(label) = p::str(v, "save") {
+        let message = p::str(v, "message").unwrap_or("").to_string();
+        let author = resolve_author(s, v);
+        let prev_doc = s.versions.last().map(|e| &e.doc);
+        let diff = prev_doc.map(|d| version_diff_summary(d, &s.doc)).unwrap_or_else(|| "Initial version".into());
+
+        s.versions.push(VersionEntry {
+            label: label.to_string(),
+            message,
+            date: super::now_iso(),
+            author,
+            branch: s.version_branch.clone(),
+            kind: VersionKind::Manual,
+            word_count: s.doc.word_count(),
+            para_count: s.doc.paragraph_count(),
+            diff_summary: diff,
+            doc: s.doc.clone(),
+        });
+        // Prune oldest auto-checkpoints if over the limit.
+        while s.versions.len() > MAX_VERSIONS {
+            if let Some(pos) = s.versions.iter().position(|e| e.kind == VersionKind::Auto) {
+                s.versions.remove(pos);
+            } else {
+                s.versions.remove(0);
+            }
+        }
+        crate::version_storage::persist_versions(s);
+    }
+
+    // Auto-checkpoint (called by the UI on save or periodic timer).
+    if p::bool(v, "auto") == Some(true) {
+        let label = {
+            let auto_count = s.versions.iter().filter(|e| e.kind == VersionKind::Auto).count();
+            format!("Auto-save #{}", auto_count.saturating_add(1))
+        };
+        let prev_doc = s.versions.last().map(|e| &e.doc);
+        let diff = prev_doc.map(|d| version_diff_summary(d, &s.doc)).unwrap_or_else(|| "Auto-checkpoint".into());
+
+        // Only create if there are actual changes since the last version.
+        let has_changes = s
+            .versions
+            .last()
+            .is_none_or(|last| s.doc.plain_text(wordcraft_doc::StoryRef::Body) != last.doc.plain_text(wordcraft_doc::StoryRef::Body));
+        if has_changes {
+            s.versions.push(VersionEntry {
+                label,
+                message: String::new(),
+                date: super::now_iso(),
+                author: resolve_author(s, v),
+                branch: s.version_branch.clone(),
+                kind: VersionKind::Auto,
+                word_count: s.doc.word_count(),
+                para_count: s.doc.paragraph_count(),
+                diff_summary: diff,
+                doc: s.doc.clone(),
+            });
+            while s.versions.len() > MAX_VERSIONS {
+                if let Some(pos) = s.versions.iter().position(|e| e.kind == VersionKind::Auto) {
+                    s.versions.remove(pos);
+                } else {
+                    s.versions.remove(0);
+                }
+            }
+            s.version_last_auto_rev = s.rev();
+            crate::version_storage::persist_versions(s);
+        }
+    }
+
+    // Restore a version.
+    if let Some(i) = p::u64(v, "restore") {
+        let entry = s.versions.get(i as usize).cloned().ok_or_else(|| CmdError::Params("no such version".into()))?;
+        s.checkpoint("Restore Version");
+        s.doc = entry.doc;
+        s.touch();
+        s.clamp_selection();
+    }
+
+    // Delete a version.
+    if let Some(i) = p::u64(v, "delete") {
+        let idx = i as usize;
+        if idx >= s.versions.len() {
+            return Err(CmdError::Params("no such version".into()));
+        }
+        s.versions.remove(idx);
+        crate::version_storage::persist_versions(s);
+    }
+
+    // Switch or create a branch.
+    if let Some(branch) = p::str(v, "branch") {
+        let branch = branch.trim();
+        if branch.is_empty() || branch.len() > 100 {
+            return Err(CmdError::Params("branch name must be 1–100 characters".into()));
+        }
+        let prev_branch = s.version_branch.clone();
+        s.version_branch = branch.to_string();
+        // Auto-save current state as a branch point if the branch is new.
+        let branch_exists = s.versions.iter().any(|e| e.branch == branch);
+        if !branch_exists && !s.versions.is_empty() {
+            let prev_doc = s.versions.last().map(|e| &e.doc);
+            let diff = prev_doc.map(|d| version_diff_summary(d, &s.doc)).unwrap_or_default();
+            s.versions.push(VersionEntry {
+                label: format!("Branch: {branch} (from {prev_branch})"),
+                message: format!("Created branch '{branch}'"),
+                date: super::now_iso(),
+                author: resolve_author(s, v),
+                branch: branch.to_string(),
+                kind: VersionKind::Branch,
+                word_count: s.doc.word_count(),
+                para_count: s.doc.paragraph_count(),
+                diff_summary: diff,
+                doc: s.doc.clone(),
+            });
+            crate::version_storage::persist_versions(s);
+        }
+    }
+
+    // List branches.
+    if p::bool(v, "listBranches") == Some(true) {
+        let mut branches: Vec<String> = s.versions.iter().map(|e| e.branch.clone()).collect();
+        branches.sort();
+        branches.dedup();
+        if !branches.contains(&s.version_branch) {
+            branches.push(s.version_branch.clone());
+            branches.sort();
+        }
+        return Ok(json!({
+            "current": s.version_branch,
+            "branches": branches,
+        }));
+    }
+
+    // Compare a version with the current document.
+    if let Some(v_idx) = p::u64(v, "compare") {
+        let entry = s.versions.get(v_idx as usize).ok_or_else(|| CmdError::Params("no such version".into()))?;
+        let diff = version_diff_summary(&entry.doc, &s.doc);
+        let old_words = entry.doc.word_count();
+        let new_words = s.doc.word_count();
+        let old_paras = entry.doc.paragraph_count();
+        let new_paras = s.doc.paragraph_count();
+
+        // Build a paragraph-level diff using LCS sequence alignment.
+        let old_texts: Vec<String> = entry
+            .doc
+            .para_paths(wordcraft_doc::StoryRef::Body)
+            .iter()
+            .filter_map(|p| entry.doc.para(wordcraft_doc::StoryRef::Body, p).map(|x| x.plain_text()))
+            .collect();
+        let new_texts: Vec<String> = s
+            .doc
+            .para_paths(wordcraft_doc::StoryRef::Body)
+            .iter()
+            .filter_map(|p| s.doc.para(wordcraft_doc::StoryRef::Body, p).map(|x| x.plain_text()))
+            .collect();
+
+        let ops = lcs_ops(&old_texts, &new_texts);
+        let mut changes = Vec::new();
+        let (mut i, mut j) = (0usize, 0usize);
+        let mut k = 0usize;
+
+        while k < ops.len() {
+            match ops.get(k) {
+                Some(Op::Same) => {
+                    i += 1;
+                    j += 1;
+                    k += 1;
+                }
+                Some(_) => {
+                    let run = ops.get(k..).unwrap_or_default().iter().take_while(|o| **o != Op::Same).count();
+                    let dels = ops.get(k..k + run).unwrap_or_default().iter().filter(|o| **o == Op::Del).count();
+                    let inss = run - dels;
+                    let pairs = dels.max(inss);
+                    for x in 0..pairs {
+                        let old = if x < dels { old_texts.get(i + x).map(String::as_str).unwrap_or("") } else { "" };
+                        let new = if x < inss { new_texts.get(j + x).map(String::as_str).unwrap_or("") } else { "" };
+                        let kind = if old.is_empty() {
+                            "added"
+                        } else if new.is_empty() {
+                            "deleted"
+                        } else {
+                            "modified"
+                        };
+                        let p_idx = if !new.is_empty() { j + x } else { i + x };
+                        let old_para_num = if x < dels { Some(i + x + 1) } else { None };
+                        let new_para_num = if x < inss { Some(j + x + 1) } else { None };
+                        changes.push(json!({
+                            "paragraph": p_idx,
+                            "oldPara": old_para_num,
+                            "newPara": new_para_num,
+                            "kind": kind,
+                            "old": old.chars().take(4000).collect::<String>(),
+                            "new": new.chars().take(4000).collect::<String>(),
+                        }));
+                    }
+                    i += dels;
+                    j += inss;
+                    k += run.max(1);
+                }
+                None => break,
+            }
+        }
+
+        return Ok(json!({
+            "summary": diff,
+            "oldWords": old_words,
+            "newWords": new_words,
+            "oldParas": old_paras,
+            "newParas": new_paras,
+            "changes": changes,
+            "version": version_to_json(v_idx as usize, entry),
+        }));
+    }
+
+    // Default: return the version list (optionally filtered by branch).
+    let branch_filter = p::str(v, "filterBranch");
+    let list: Vec<Value> =
+        s.versions.iter().enumerate().filter(|(_, e)| branch_filter.is_none_or(|b| e.branch == b)).map(|(i, e)| version_to_json(i, e)).collect();
+    Ok(Value::Array(list))
 }
 
 /// Apply AutoCorrect to the word just before the caret (called after typing a space/punctuation):
@@ -1149,59 +1529,6 @@ fn mark_block(b: &Block, f: &dyn Fn(&mut CharProps), depth: usize) -> Block {
             Block::Table(t)
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Op {
-    Same,
-    Del,
-    Ins,
-}
-
-/// Longest sequence the comparison table is built for; the rest of a longer sequence is
-/// compared as deleted and inserted, never dropped.
-const MAX_LCS: usize = 4000;
-
-/// LCS edit script between two sequences: the common start and end are matched first, then the
-/// middle (bounded size).
-fn lcs_ops<T: PartialEq>(a: &[T], b: &[T]) -> Vec<Op> {
-    let pre = a.iter().zip(b).take_while(|(x, y)| x == y).count();
-    let (ra, rb) = (a.get(pre..).unwrap_or_default(), b.get(pre..).unwrap_or_default());
-    let suf = ra.iter().rev().zip(rb.iter().rev()).take_while(|(x, y)| x == y).count();
-    let (a, b) = (ra.get(..ra.len() - suf).unwrap_or_default(), rb.get(..rb.len() - suf).unwrap_or_default());
-    let mut ops = vec![Op::Same; pre];
-    let (n, m) = (a.len().min(MAX_LCS), b.len().min(MAX_LCS));
-    let mut t = vec![vec![0u32; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            let v = if a.get(i) == b.get(j) {
-                t.get(i + 1).and_then(|r| r.get(j + 1)).copied().unwrap_or(0) + 1
-            } else {
-                t.get(i + 1).and_then(|r| r.get(j)).copied().unwrap_or(0).max(t.get(i).and_then(|r| r.get(j + 1)).copied().unwrap_or(0))
-            };
-            if let Some(c) = t.get_mut(i).and_then(|r| r.get_mut(j)) {
-                *c = v;
-            }
-        }
-    }
-    let (mut i, mut j) = (0, 0);
-    while i < n && j < m {
-        if a.get(i) == b.get(j) {
-            ops.push(Op::Same);
-            i += 1;
-            j += 1;
-        } else if t.get(i + 1).and_then(|r| r.get(j)) >= t.get(i).and_then(|r| r.get(j + 1)) {
-            ops.push(Op::Del);
-            i += 1;
-        } else {
-            ops.push(Op::Ins);
-            j += 1;
-        }
-    }
-    ops.extend(std::iter::repeat_n(Op::Del, a.len() - i));
-    ops.extend(std::iter::repeat_n(Op::Ins, b.len() - j));
-    ops.extend(std::iter::repeat_n(Op::Same, suf));
-    ops
 }
 
 /// Words with the spaces after them ("The ", "cat "), or single characters.

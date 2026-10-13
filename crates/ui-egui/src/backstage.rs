@@ -362,6 +362,19 @@ fn info_page(app: &mut WordApp, ui: &mut Ui) {
                 let _ = app.run("file.encrypt", json!({"password": null}));
             }
         });
+        ui.add_space(18.0);
+        ui.label(egui::RichText::new(tl!("Version History")).font(semibold(15.0)));
+        let v_count = app.session.versions.len();
+        if v_count == 0 {
+            ui.label(tl!("Track, compare and restore previous versions of this document locally."));
+        } else {
+            ui.label(crate::i18n::fmt(tl!("{count} saved versions available."), &[("count", &v_count.to_string())]));
+        }
+        if ui.button(egui::RichText::new(tl!("Open Version History…")).font(medium(13.5))).clicked() {
+            app.ui.backstage = false;
+            let _ = app.run("view.versionHistory", json!({"value": true}));
+            app.canvas.want_focus = true;
+        }
         let ui = &mut cols[1];
         ui.label(egui::RichText::new(tl!("Statistics")).font(semibold(15.0)));
         for (l, k) in [("Pages", "pages"), ("Words", "words"), ("Paragraphs", "paragraphs"), ("Sections", "sections"), ("Comments", "comments")] {

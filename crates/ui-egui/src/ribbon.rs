@@ -1671,6 +1671,10 @@ fn view(app: &mut WordApp, ui: &mut Ui) {
             if ui.checkbox(&mut a, tl!("AI Assistant")).changed() {
                 let _ = app.run("view.aiPane", json!({"value": a}));
             }
+            let mut vp = v.version_pane;
+            if ui.checkbox(&mut vp, tl!("Version History")).changed() {
+                let _ = app.run("view.versionHistory", json!({"value": vp}));
+            }
         });
     });
     group(ui, "Zoom", None, app, |ui, app| {

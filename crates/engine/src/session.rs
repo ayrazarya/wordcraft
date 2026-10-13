@@ -18,6 +18,43 @@ use wordcraft_doc::props::CharProps;
 use wordcraft_doc::{Document, Path, Pos, StoryRef, Table};
 use wordcraft_layout::{DocLayout, LayoutCache, LayoutOptions, NumeralMode, ViewMode};
 
+/// What triggered a version snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VersionKind {
+    /// Explicit user commit (named checkpoint with an optional message).
+    Manual,
+    /// Automatic checkpoint (save, periodic, or after a batch of edits).
+    Auto,
+    /// Created when the user named a branch.
+    Branch,
+}
+
+/// A saved version of the document with rich metadata for the Git-like version control system.
+/// Everything is stored locally (offline-first); no network or server is involved.
+#[derive(Clone)]
+pub struct VersionEntry {
+    /// Short label shown in the timeline ("Draft 1", "Final edit", or auto-generated).
+    pub label: String,
+    /// Optional longer commit message from the user.
+    pub message: String,
+    /// ISO-8601 UTC timestamp of when this version was created.
+    pub date: String,
+    /// Author who created this version.
+    pub author: String,
+    /// Branch this version belongs to.
+    pub branch: String,
+    /// What triggered this version.
+    pub kind: VersionKind,
+    /// Word count at the time of this version.
+    pub word_count: usize,
+    /// Paragraph count at the time of this version.
+    pub para_count: usize,
+    /// Short diff summary against the previous version ("Added 42 words, changed 3 paragraphs").
+    pub diff_summary: String,
+    /// The full document snapshot.
+    pub doc: Document,
+}
+
 use crate::{CmdError, Registry};
 
 /// A selection: anchor (where it started) and focus (where the caret is).
@@ -192,6 +229,9 @@ pub struct ViewState {
     /// AI Assistant sidebar pane
     #[serde(default)]
     pub ai_pane: bool,
+    /// Version History sidebar pane (File › Info › Version History)
+    #[serde(default)]
+    pub version_pane: bool,
 }
 
 fn on() -> bool {
@@ -253,6 +293,7 @@ impl Default for ViewState {
             sync_scroll: false,
             split_view: false,
             ai_pane: false,
+            version_pane: false,
         }
     }
 }
@@ -407,8 +448,16 @@ pub struct Session {
     /// Macro being recorded: (name, steps).
     pub recording: Option<(String, Vec<(String, Value)>)>,
     pub macros: std::collections::BTreeMap<String, Vec<(String, Value)>>,
-    /// Saved versions: (label, date, document).
-    pub versions: Vec<(String, String, Document)>,
+    /// Saved versions: full version entries with metadata.
+    pub versions: Vec<VersionEntry>,
+    /// Current branch name for version control.
+    pub version_branch: String,
+    /// Auto-checkpoint counter: tracks edits since last auto-save for automatic version creation.
+    pub version_edit_count: u64,
+    /// Revision at last auto-checkpoint.
+    pub version_last_auto_rev: u64,
+    /// Unique ID for untitled documents to associate versions locally before saving to a file.
+    pub document_uuid: String,
     /// Quick Parts / AutoText entries.
     pub building_blocks: std::collections::BTreeMap<String, Fragment>,
     pub autosave: bool,
@@ -613,6 +662,10 @@ impl Session {
             recording: None,
             macros: Default::default(),
             versions: Vec::new(),
+            version_branch: "main".into(),
+            version_edit_count: 0,
+            version_last_auto_rev: 0,
+            document_uuid: format!("{:016x}", crate::cmd::now_unix()),
             building_blocks: Default::default(),
             autosave: true,
             bib_style,
@@ -986,6 +1039,7 @@ impl Session {
         self.go_back_step = 0;
         self.view.outline.collapsed.clear();
         self.reset_history();
+        self.document_uuid = format!("{:016x}", crate::cmd::now_unix());
         self.touch();
         self.dirty = false;
         self.relayout();
@@ -1043,6 +1097,10 @@ impl Session {
             recording: _,
             macros: _,
             versions: _,
+            version_branch: _,
+            version_edit_count: _,
+            version_last_auto_rev: _,
+            document_uuid: _,
             building_blocks: _,
             autosave: _,
             bib_style: _,
