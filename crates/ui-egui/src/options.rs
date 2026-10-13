@@ -312,8 +312,7 @@ fn save(app: &mut WordApp, ui: &mut Ui) {
     if browser {
         r.on_disabled_hover_text(crate::AutoSaveBlock::Browser.reason());
     } else if r.changed() {
-        app.autosave = autosave;
-        app.session.autosave = autosave;
+        let _ = app.run("file.autosave", json!({"value": autosave}));
     }
     note(ui, "AutoSave writes your changes to the file a moment after you stop typing.");
 }

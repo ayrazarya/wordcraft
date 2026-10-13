@@ -245,6 +245,9 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                         None => {
                             let _ = app.run("file.autosave", json!({}));
                         }
+                        Some(crate::AutoSaveBlock::NotSavedHere) => {
+                            let _ = app.run("file.autosave", json!({"value": true}));
+                        }
                         // AutoSave comes on once Save As has saved (maybe on a later frame, #94).
                         Some(b) if b.save_as_helps() => {
                             let _ = app.save_as(crate::file_dialogs::AfterSave::AutoSave);

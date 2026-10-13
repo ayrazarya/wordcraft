@@ -257,6 +257,13 @@ pub struct UiState {
     /// AI Assistant configuration (credentials, endpoint, model).
     #[serde(default)]
     pub ai_config: ai_chat::AiConfig,
+    /// AutoSave: write changes to saved documents automatically (File › Options › Save, and switch).
+    #[serde(default = "default_true")]
+    pub autosave: bool,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 /// Most recent documents kept (File › Options › Advanced offers 0–50, as Word does).
@@ -307,6 +314,7 @@ impl Default for UiState {
             update_fields_before_print: false,
             dictionary: Vec::new(),
             ai_config: ai_chat::AiConfig::default(),
+            autosave: true,
         }
     }
 }
@@ -412,6 +420,7 @@ pub struct WordApp {
     pub autosave: bool,
     pub word_count: (u64, usize),
     last_autosave: f64,
+    last_autorecover: f64,
     /// The tab shown before the Equation tab came up (restored when editing ends).
     pub(crate) equation_prev_tab: Option<String>,
     /// SmartArt Text Pane: the item last focused (Promote, Demote and Add Shape act on it) and
@@ -508,6 +517,7 @@ impl WordApp {
             autosave: true,
             word_count: (0, 0),
             last_autosave: 0.0,
+            last_autorecover: 0.0,
             equation_prev_tab: None,
             smart_art_item: None,
             smart_art_typing: None,
@@ -562,12 +572,15 @@ impl WordApp {
         ui.keyboard = self.session.keymap.clone();
         ui.ribbon = self.session.ribbon.clone();
         ui.ink_pens = self.session.view.draw.pens.clone();
+        ui.autosave = self.autosave;
         ui
     }
 
     /// Restore preferences saved by [`WordApp::prefs`].
     pub fn apply_prefs(&mut self, ui: UiState) {
         self.ui = ui;
+        self.autosave = self.ui.autosave;
+        self.session.autosave = self.ui.autosave;
         self.ui.backstage = false;
         // A `ui.json` from before the theme setting: its dark-mode switch picks Dark or Light.
         if let Some(dark) = self.ui.legacy_dark.take() {
@@ -786,17 +799,29 @@ impl WordApp {
         }
         let go = match choice {
             SaveChoice::Cancel => false,
-            SaveChoice::DontSave => true,
+            SaveChoice::DontSave => {
+                self.clear_autorecover();
+                true
+            }
             // A new document: ask where through Save As; the command runs once that has saved,
             // which with the desktop's non-blocking dialog is on a later frame (#94).
             SaveChoice::Save if self.session.path.is_none() && self.services.download.is_none() => {
                 return match self.save_as(file_dialogs::AfterSave::Continue { then, params, document }) {
-                    file_dialogs::Asked::Done(r) => r,
+                    file_dialogs::Asked::Done(r) => {
+                        self.clear_autorecover();
+                        r
+                    }
                     file_dialogs::Asked::Pending => Ok(json!({"pending": "saveAs"})),
                     file_dialogs::Asked::Busy => Ok(json!({"done": false})),
                 };
             }
-            SaveChoice::Save => self.save_for_prompt(),
+            SaveChoice::Save => {
+                let saved = self.save_for_prompt();
+                if saved {
+                    self.clear_autorecover();
+                }
+                saved
+            }
         };
         if !go {
             return Ok(json!({"done": false}));
@@ -842,7 +867,8 @@ impl WordApp {
     }
 
     /// The window's close button (or the system) asked to quit. Returns true to let the window
-    /// close; with unsaved changes it asks first and returns false.
+    /// close; with unsaved changes it asks first and returns false. If AutoSave covers the document,
+    /// it writes the changes immediately so the window can close safely.
     pub fn close_requested(&mut self) -> bool {
         if self.printing.busy() {
             self.status(tl!("Wait for the print job to finish submitting before closing."));
@@ -850,6 +876,13 @@ impl WordApp {
         }
         if self.quit_requested || !self.session.dirty {
             return true;
+        }
+        if self.autosaves() {
+            if let Err(e) = self.session.run("file.save", &json!({})) {
+                log::warn!("AutoSave on close failed: {e}");
+            } else {
+                return true;
+            }
         }
         let _ = self.run("file.close", json!({}));
         false
@@ -1466,24 +1499,66 @@ impl WordApp {
     /// cover is an error that says why, instead of a switch that is on but saves nothing (#196).
     fn set_autosave(&mut self, params: &Value) -> Result<Value, String> {
         let on = params.get("value").and_then(Value::as_bool).unwrap_or(!self.autosaves());
-        if on && let Some(block) = self.autosave_block() {
-            return Err(block.reason());
+        if on {
+            if let Some(p) = &self.session.path
+                && keeps_everything(&p.to_string_lossy())
+            {
+                self.autosave_path = Some(p.clone());
+            }
+            if let Some(block) = self.autosave_block() {
+                return Err(block.reason());
+            }
         }
         self.autosave = on;
         self.session.autosave = on;
+        self.ui.autosave = on;
         Ok(json!({"value": on}))
     }
 
-    /// AutoSave: write a saved document a couple of seconds after the last change. A failure is
-    /// shown in the status bar and turns AutoSave off for the file until the user saves it again.
+    /// AutoSave: write a saved document a moment after editing stops, or periodically during continuous
+    /// editing so changes aren't starved. For unsaved documents, writes an AutoRecover snapshot.
     fn autosave_tick(&mut self, now: f64) {
-        if self.autosaves() && self.session.dirty && now - self.last_autosave > 2500.0 && now - self.canvas.caret_visible_since > 1500.0 {
-            self.last_autosave = now;
-            if let Err(e) = self.session.run("file.save", &json!({})) {
-                log::warn!("AutoSave failed: {e}");
-                self.autosave_path = None;
-                self.status(i18n::fmt(tl!("AutoSave failed: {error}. Save the document to turn AutoSave back on."), &[("error", &e.to_string())]));
+        if self.autosaves() && self.session.dirty {
+            let paused_typing = now - self.canvas.caret_visible_since > 800.0 && now - self.last_autosave > 1000.0;
+            let interval_elapsed = now - self.last_autosave > 2500.0;
+            if paused_typing || interval_elapsed {
+                self.last_autosave = now;
+                if let Err(e) = self.session.run("file.save", &json!({})) {
+                    log::warn!("AutoSave failed: {e}");
+                    self.autosave_path = None;
+                    self.status(i18n::fmt(
+                        tl!("AutoSave failed: {error}. Save the document to turn AutoSave back on."),
+                        &[("error", &e.to_string())],
+                    ));
+                } else {
+                    self.clear_autorecover();
+                }
             }
+        } else if self.session.dirty && !self.autosaves() {
+            if now - self.last_autorecover > 3000.0 {
+                self.last_autorecover = now;
+                self.write_autorecover();
+            }
+        } else if !self.session.dirty {
+            self.clear_autorecover();
+        }
+    }
+
+    /// Write an AutoRecover backup for unsaved work in case of a crash or sudden close.
+    fn write_autorecover(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(dir) = wordcraft_control_key::settings_dir().map(|d| d.join("autorecover")) {
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("autorecover_unsaved.docx");
+            let _ = wordcraft_engine::io::save_path(&path, &self.session.doc);
+        }
+    }
+
+    /// Remove the AutoRecover backup once work is cleanly saved or discarded.
+    pub fn clear_autorecover(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = wordcraft_control_key::settings_dir().map(|d| d.join("autorecover").join("autorecover_unsaved.docx")) {
+            let _ = std::fs::remove_file(path);
         }
     }
 
@@ -3598,6 +3673,51 @@ mod tests {
         assert!(!a.session.dirty);
         let saved = wordcraft_engine::io::open_path(&path).unwrap();
         assert!(saved.plain_text(wordcraft_doc::StoryRef::Body).contains("Typed More Original"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn autosave_activates_on_opened_file_when_toggled() {
+        let dir = scratch("autosave-toggle");
+        let path = docx_on_disk(&dir, "Original");
+        let mut a = app();
+        a.run("file.open", json!({"path": path.to_string_lossy()})).unwrap();
+        assert_eq!(a.autosave_block(), Some(AutoSaveBlock::NotSavedHere));
+        assert!(!a.autosaves());
+
+        // Turning AutoSave on activates it directly for this document
+        a.run("file.autosave", json!({"value": true})).unwrap();
+        assert_eq!(a.autosave_block(), None);
+        assert!(a.autosaves());
+
+        a.run("text.insert", json!({"text": "Edited "})).unwrap();
+        assert!(a.session.dirty);
+        a.autosave_tick(now_ms() + 10_000.0);
+        assert!(!a.session.dirty);
+        let saved = wordcraft_engine::io::open_path(&path).unwrap();
+        assert!(saved.plain_text(wordcraft_doc::StoryRef::Body).contains("Edited Original"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn autosave_saves_automatically_on_close_requested_when_on() {
+        let dir = scratch("autosave-close");
+        let path = docx_on_disk(&dir, "Original");
+        let mut a = app();
+        a.run("file.open", json!({"path": path.to_string_lossy()})).unwrap();
+        a.run("file.autosave", json!({"value": true})).unwrap();
+        assert!(a.autosaves());
+
+        a.run("text.insert", json!({"text": "BeforeClose "})).unwrap();
+        assert!(a.session.dirty);
+
+        // Closing the window saves changes immediately without asking
+        assert!(a.close_requested());
+        assert!(!a.session.dirty);
+        assert_eq!(prompt(&a), None);
+
+        let saved = wordcraft_engine::io::open_path(&path).unwrap();
+        assert!(saved.plain_text(wordcraft_doc::StoryRef::Body).contains("BeforeClose Original"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

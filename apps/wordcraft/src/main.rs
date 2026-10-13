@@ -78,6 +78,9 @@ impl eframe::App for App {
         self.3.show(frame);
     }
     fn on_exit(&mut self) {
+        if self.0.autosaves() && self.0.session.dirty {
+            let _ = self.0.session.run("file.save", &serde_json::json!({}));
+        }
         print::finish_pending_jobs();
         save_prefs(&self.0);
         if let Some(key_file) = &self.2 {
@@ -105,6 +108,9 @@ fn schedule_macos_terminate(app: &WordApp, key_file: Option<&control_server::Key
     }
     log::info!("window close: quitting");
     // This path can bypass on_exit. Join the owned workers before termination and cleanup.
+    if app.autosaves() && app.session.dirty {
+        let _ = app.session.run("file.save", &serde_json::json!({}));
+    }
     print::finish_pending_jobs();
     save_prefs(app);
     if let Some(key_file) = key_file {
@@ -336,10 +342,25 @@ fn main() -> eframe::Result {
                 app = app.with_control(rx);
                 key_file = file;
             }
+            // Check for emergency AutoRecover from a sudden close / crash:
+            let mut recovered = false;
+            if files.is_empty()
+                && !sample
+                && control_port.is_none()
+                && let Some(rec_path) = wordcraft_control_key::settings_dir().map(|d| d.join("autorecover").join("autorecover_unsaved.docx"))
+                && rec_path.exists()
+                && let Ok(doc) = wordcraft_engine::io::open_path(&rec_path)
+            {
+                app.session.set_document(doc);
+                app.session.path = None;
+                app.session.dirty = true;
+                app.status("WordCraft recovered unsaved work from a previous session.".to_string());
+                recovered = true;
+            }
             // Nothing to open (no files, no sample, no control channel driving the editor): start
             // on File › Home, as Word does (#766), unless the Start screen option is off. Files
             // macOS hands over later open on top of it and close it (`apple_events`).
-            if files.is_empty() && !sample && control_port.is_none() {
+            if files.is_empty() && !sample && control_port.is_none() && !recovered {
                 app.start_screen();
             }
             for f in files {
